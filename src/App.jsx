@@ -525,6 +525,8 @@ export default function App() {
       setIsSaving(true);
       setSaveStatus('saving');
 
+      const isCustom = activeTopic.category === 'Custom' || !!activeTopic.user_id;
+
       const { error } = await supabase
         .from('user_debates')
         .upsert(
@@ -533,6 +535,7 @@ export default function App() {
             topic_id: activeTopic.id,
             stance: chosenStance,
             speech_data: speechInputs,
+            is_custom: isCustom,
             updated_at: new Date().toISOString(),
           },
           { onConflict: 'user_id,topic_id,stance' }
