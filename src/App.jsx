@@ -88,7 +88,7 @@ export default function App() {
 
   // AI Score Modal State
   const [loadingAiScore, setLoadingAiScore] = useState(false);
-  const [aiScoreData, setAiScoreData] = useState(null); // { score, feedback, strengths, improvements }
+  const [aiScoreData, setAiScoreData] = useState(null); // { score, feedbackText, strengths, improvements }
 
   // Streak Widget Popover State
   const [showStreakModal, setShowStreakModal] = useState(false);
@@ -567,6 +567,9 @@ export default function App() {
       setIsSaving(true);
       setSaveStatus('saving');
 
+      const existingDebate = userDebatesMap[`${activeTopic.id}_${chosenStance}`];
+      const currentCompleted = existingDebate?.is_completed || false;
+
       const { error } = await supabase
         .from('user_debates')
         .upsert(
@@ -575,7 +578,7 @@ export default function App() {
             topic_id: activeTopic.id,
             stance: chosenStance,
             speech_data: speechInputs,
-            is_completed: isSpeechFullyCompleted(),
+            is_completed: currentCompleted,
             updated_at: new Date().toISOString(),
           },
           { onConflict: 'user_id,topic_id,stance' }
@@ -589,64 +592,14 @@ export default function App() {
       // Update local state map
       setUserDebatesMap((prev) => ({
         ...prev,
-        [`${activeTopic.id}_${chosenStance}`]: { speech_data: speechInputs, is_completed: isSpeechFullyCompleted() },
-        [activeTopic.id]: { speech_data: speechInputs, is_completed: isSpeechFullyCompleted() },
+        [`${activeTopic.id}_${chosenStance}`]: { speech_data: speechInputs, is_completed: currentCompleted },
+        [activeTopic.id]: { speech_data: speechInputs, is_completed: currentCompleted },
       }));
 
       setTimeout(() => setSaveStatus(''), 2500);
     } catch (err) {
       console.error('Error saving speech:', err.message);
       setSaveStatus('error');
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
-  // Complete & Submit Topic (+10 XP AWARDED HERE ONLY WHEN ALL FIELDS DONE)
-  const handleCompleteTopic = async () => {
-    if (!session) {
-      setShowAuthModal(true);
-      return;
-    }
-
-    if (!activeTopic) return;
-
-    if (!isSpeechFullyCompleted()) {
-      alert('To complete this topic, please fill in all speech text fields first!');
-      return;
-    }
-
-    try {
-      setIsSaving(true);
-
-      const { error } = await supabase
-        .from('user_debates')
-        .upsert(
-          {
-            user_id: session.user.id,
-            topic_id: activeTopic.id,
-            stance: chosenStance,
-            speech_data: speechInputs,
-            is_completed: true,
-            updated_at: new Date().toISOString(),
-          },
-          { onConflict: 'user_id,topic_id,stance' }
-        );
-
-      if (error) throw error;
-
-      setInitialSpeechInputs(speechInputs);
-      setUserDebatesMap((prev) => ({
-        ...prev,
-        [`${activeTopic.id}_${chosenStance}`]: { speech_data: speechInputs, is_completed: true },
-        [activeTopic.id]: { speech_data: speechInputs, is_completed: true },
-      }));
-
-      awardUserXp(10);
-      alert('🎉 Topic Completed! You earned +10 XP!');
-    } catch (err) {
-      console.error('Error completing topic:', err.message);
-      alert('Could not complete topic. Please try again.');
     } finally {
       setIsSaving(false);
     }
@@ -701,19 +654,24 @@ Task:
     }
   };
 
-  // AI Speech Evaluation & Scoring (1-10 Score)
+  // AI Speech Evaluation, Scoring (1-10 Score), and Completion Logic (+10 XP IF SCORE > 5)
   const handleEvaluateFullSpeech = async () => {
+    if (!session) {
+      setShowAuthModal(true);
+      return;
+    }
+
     if (!activeTopic) return;
+
+    if (!isSpeechFullyCompleted()) {
+      alert('Please fill out all speech section fields before submitting for an AI Score!');
+      return;
+    }
 
     const speechText =
       chosenStance === 'Affirmative'
         ? `Intro: ${speechInputs.topicIntro}\nPoint 1: ${speechInputs.point1}\nPoint 2: ${speechInputs.point2}\nPoint 3: ${speechInputs.point3}\nConclusion: ${speechInputs.conclusion}`
         : `Opening: ${speechInputs.opening}\nRebuttal 1: ${speechInputs.rebuttal1}\nRebuttal 2: ${speechInputs.rebuttal2}\nClosing: ${speechInputs.closing}`;
-
-    if (!speechText.replace(/Intro:|Point 1:|Point 2:|Point 3:|Conclusion:|Opening:|Rebuttal 1:|Rebuttal 2:|Closing:/g, '').trim()) {
-      alert('Please write some content in your speech fields before asking for an AI Score!');
-      return;
-    }
 
     try {
       setLoadingAiScore(true);
@@ -726,8 +684,8 @@ Task:
 
       const ai = new GoogleGenAI({ apiKey });
 
-      const promptText = `You are a friendly, expert youth debate judge. 
-Evaluate the following complete debate speech for a student (age 10-14).
+      const promptText = `You are a friendly, fair youth debate judge evaluating a student (age 10-14).
+Evaluate the complete debate speech below for clarity, relevant arguments, and effort. If the text consists of gibberish, random letters, or meaningless filler, give it a score lower than 5.
 
 Topic: "${activeTopic.title}"
 Stance: ${chosenStance}
@@ -735,19 +693,76 @@ Stance: ${chosenStance}
 Full Speech Draft:
 ${speechText}
 
-Provide your feedback in clear sections:
-1. Overall Score out of 10 (e.g. "8/10")
-2. Key Strengths (2 bullet points)
-3. Areas to Improve (2 bullet points)
-4. Judge's Summary Advice (2 sentences)`;
+Return your response strictly in valid JSON format with no markdown formatting around it:
+{
+  "score": <number from 1 to 10>,
+  "strengths": ["point 1", "point 2"],
+  "improvements": ["point 1", "point 2"],
+  "summary": "<2 sentence summary advice>"
+}`;
 
       const response = await ai.models.generateContent({
         model: 'gemini-2.5-flash',
         contents: promptText,
       });
 
+      let parsedResult;
+      try {
+        const cleanText = (response.text || '')
+          .replace(/```json/g, '')
+          .replace(/```/g, '')
+          .trim();
+        parsedResult = JSON.parse(cleanText);
+      } catch (e) {
+        // Fallback if parsing fails
+        parsedResult = {
+          score: 6,
+          strengths: ['Great effort in putting together a full speech!'],
+          improvements: ['Work on expanding your reasons using the AREO formula.'],
+          summary: 'A solid attempt at crafting your speech draft!',
+        };
+      }
+
+      const numericScore = Number(parsedResult.score) || 0;
+      const passedScoreThreshold = numericScore > 5;
+
+      const existingDebate = userDebatesMap[`${activeTopic.id}_${chosenStance}`];
+      const isAlreadyCompleted = existingDebate?.is_completed || false;
+
+      // Update Supabase if score > 5
+      if (passedScoreThreshold) {
+        await supabase
+          .from('user_debates')
+          .upsert(
+            {
+              user_id: session.user.id,
+              topic_id: activeTopic.id,
+              stance: chosenStance,
+              speech_data: speechInputs,
+              is_completed: true,
+              updated_at: new Date().toISOString(),
+            },
+            { onConflict: 'user_id,topic_id,stance' }
+          );
+
+        setUserDebatesMap((prev) => ({
+          ...prev,
+          [`${activeTopic.id}_${chosenStance}`]: { speech_data: speechInputs, is_completed: true },
+          [activeTopic.id]: { speech_data: speechInputs, is_completed: true },
+        }));
+
+        if (!isAlreadyCompleted) {
+          awardUserXp(10);
+        }
+      }
+
       setAiScoreData({
-        feedbackText: response.text || 'Speech evaluated successfully!',
+        score: numericScore,
+        passed: passedScoreThreshold,
+        strengths: parsedResult.strengths || [],
+        improvements: parsedResult.improvements || [],
+        summary: parsedResult.summary || '',
+        isAlreadyCompleted,
       });
     } catch (err) {
       console.error('Error evaluating speech score:', err);
@@ -1037,11 +1052,11 @@ Provide your feedback in clear sections:
       {/* GEMINI AI SPEECH SCORE & EVALUATION MODAL */}
       {aiScoreData && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fadeIn">
-          <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-slate-200/80 space-y-4">
+          <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-slate-200/80 space-y-5">
             <div className="flex justify-between items-center border-b border-slate-100 pb-3">
               <div className="flex items-center space-x-2">
                 <span className="text-2xl">📊</span>
-                <h3 className="text-lg font-black text-blue-950">AI Speech Score & Judge Feedback</h3>
+                <h3 className="text-lg font-black text-blue-950">AI Speech Score & Feedback</h3>
               </div>
               <button
                 onClick={() => setAiScoreData(null)}
@@ -1051,8 +1066,64 @@ Provide your feedback in clear sections:
               </button>
             </div>
 
-            <div className="bg-gradient-to-br from-blue-50 to-indigo-50 border border-blue-100 rounded-2xl p-5 text-xs text-slate-700 space-y-3 max-h-96 overflow-y-auto whitespace-pre-wrap leading-relaxed font-medium">
-              {aiScoreData.feedbackText}
+            {/* Score Banner & Outcome */}
+            <div
+              className={`p-5 rounded-2xl text-center border flex flex-col items-center justify-center space-y-1.5 ${
+                aiScoreData.passed
+                  ? 'bg-emerald-50 border-emerald-200 text-emerald-950'
+                  : 'bg-amber-50 border-amber-200 text-amber-950'
+              }`}
+            >
+              <div className="text-4xl font-black">
+                {aiScoreData.score} / 10
+              </div>
+              <div className="text-xs font-black uppercase tracking-wider">
+                {aiScoreData.passed
+                  ? '🎉 Topic Passed & Completed!'
+                  : '⚡ Score 5 or lower — Revision Needed!'}
+              </div>
+              <p className="text-[11px] font-medium text-slate-600 max-w-xs leading-relaxed">
+                {aiScoreData.passed
+                  ? aiScoreData.isAlreadyCompleted
+                    ? 'You have already earned your +10 XP for completing this topic!'
+                    : 'Great effort! You earned +10 XP for passing this topic!'
+                  : 'To unlock your +10 XP and complete this topic, refine your points and score higher than 5.'}
+              </p>
+            </div>
+
+            {/* Detailed Feedback Breakdown */}
+            <div className="space-y-3 max-h-60 overflow-y-auto text-xs pr-1">
+              {aiScoreData.strengths.length > 0 && (
+                <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-3.5 space-y-1.5">
+                  <span className="font-extrabold text-slate-800 flex items-center gap-1 text-[11px]">
+                    💪 Key Strengths:
+                  </span>
+                  <ul className="list-disc list-inside space-y-1 text-slate-600">
+                    {aiScoreData.strengths.map((str, idx) => (
+                      <li key={idx}>{str}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {aiScoreData.improvements.length > 0 && (
+                <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-3.5 space-y-1.5">
+                  <span className="font-extrabold text-slate-800 flex items-center gap-1 text-[11px]">
+                    🎯 Areas to Improve:
+                  </span>
+                  <ul className="list-disc list-inside space-y-1 text-slate-600">
+                    {aiScoreData.improvements.map((imp, idx) => (
+                      <li key={idx}>{imp}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {aiScoreData.summary && (
+                <div className="bg-blue-50/60 border border-blue-100 rounded-xl p-3.5 text-slate-700 italic">
+                  "{aiScoreData.summary}"
+                </div>
+              )}
             </div>
 
             <div className="flex gap-3 pt-2">
@@ -1660,17 +1731,8 @@ Provide your feedback in clear sections:
                 <h2 className="text-2xl font-black mt-2">{activeTopic.title}</h2>
               </div>
 
-              {/* ACTION BUTTONS: AI SCORE + SAVE PROGRESS + COMPLETE TOPIC */}
+              {/* ACTION BUTTONS: SAVE PROGRESS + COMPLETE TOPIC (AI SCORE > 5) */}
               <div className="flex flex-wrap items-center gap-2.5 shrink-0">
-                <button
-                  onClick={handleEvaluateFullSpeech}
-                  disabled={loadingAiScore}
-                  className="px-3.5 py-2.5 bg-amber-400 hover:bg-amber-300 text-slate-900 font-extrabold text-xs rounded-xl shadow-md transition flex items-center space-x-1.5 cursor-pointer disabled:opacity-50"
-                >
-                  <span>📊</span>
-                  <span>{loadingAiScore ? 'Evaluating...' : 'Get AI Speech Score'}</span>
-                </button>
-
                 <button
                   onClick={handleSaveSpeech}
                   disabled={isSaving || !hasUnsavedChanges}
@@ -1697,12 +1759,12 @@ Provide your feedback in clear sections:
                 </button>
 
                 <button
-                  onClick={handleCompleteTopic}
-                  disabled={isSaving || !isSpeechFullyCompleted()}
-                  className="px-3.5 py-2.5 bg-emerald-500 hover:bg-emerald-600 text-white font-extrabold text-xs rounded-xl shadow-md transition flex items-center space-x-1.5 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                  onClick={handleEvaluateFullSpeech}
+                  disabled={loadingAiScore || !isSpeechFullyCompleted()}
+                  className="px-4 py-2.5 bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-slate-900 font-extrabold text-xs rounded-xl shadow-md transition flex items-center space-x-1.5 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                   <span>🏆</span>
-                  <span>Complete & Submit (+10 XP)</span>
+                  <span>{loadingAiScore ? 'Judging Speech...' : 'Submit to AI Score (+10 XP)'}</span>
                 </button>
               </div>
             </div>
@@ -1818,11 +1880,11 @@ Provide your feedback in clear sections:
                   <div className="flex justify-between items-center">
                     <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider">Completion Requirement</h4>
                     <span className="text-[10px] bg-blue-100 text-blue-700 px-2 py-0.5 rounded-md font-bold">
-                      {isSpeechFullyCompleted() ? '✓ Ready to Submit' : 'Incomplete'}
+                      {isSpeechFullyCompleted() ? '✓ Ready for AI Score' : 'Incomplete'}
                     </span>
                   </div>
                   <p className="text-xs text-slate-500 leading-relaxed">
-                    Fill in every section of your speech to unlock the <strong>Complete & Submit (+10 XP)</strong> reward button above!
+                    Fill out all text fields, then click <strong>Submit to AI Score (+10 XP)</strong>. Score <strong>higher than 5/10</strong> to complete the topic and earn your XP!
                   </p>
                 </div>
 
