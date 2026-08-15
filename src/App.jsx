@@ -41,6 +41,28 @@ const DEFAULT_SPEECH = {
   closing: '',
 };
 
+// Persist completion inside speech_data — user_debates has no is_completed column
+const SPEECH_META_KEY = '__meta';
+
+const unpackSpeechData = (speechData) => {
+  if (!speechData || typeof speechData !== 'object') {
+    return { ...DEFAULT_SPEECH };
+  }
+  const { [SPEECH_META_KEY]: _meta, ...fields } = speechData;
+  return { ...DEFAULT_SPEECH, ...fields };
+};
+
+const packSpeechData = (speechInputs, isCompleted = false) => ({
+  ...speechInputs,
+  [SPEECH_META_KEY]: { is_completed: Boolean(isCompleted) },
+});
+
+const getDebateCompleted = (debate) => {
+  if (!debate) return false;
+  if (typeof debate.is_completed === 'boolean') return debate.is_completed;
+  return Boolean(debate.speech_data?.[SPEECH_META_KEY]?.is_completed);
+};
+
 export default function App() {
   const [activeTab, setActiveTab] = useState('explorer'); // 'explorer' | 'my-topics' | 'arena' | 'hub' | 'profile'
   const [selectedFilter, setSelectedFilter] = useState('All Topics');
@@ -238,10 +260,15 @@ export default function App() {
       if (data) {
         const debateMap = {};
         data.forEach((item) => {
-          debateMap[`${item.topic_id}_${item.stance}`] = item;
+          const normalized = {
+            ...item,
+            speech_data: unpackSpeechData(item.speech_data),
+            is_completed: getDebateCompleted(item),
+          };
+          debateMap[`${item.topic_id}_${item.stance}`] = normalized;
           // Also set generic topic_id key for card badges
-          if (!debateMap[item.topic_id] || item.is_completed) {
-            debateMap[item.topic_id] = item;
+          if (!debateMap[item.topic_id] || normalized.is_completed) {
+            debateMap[item.topic_id] = normalized;
           }
         });
         setUserDebatesMap(debateMap);
@@ -530,8 +557,9 @@ export default function App() {
       if (error) throw error;
 
       if (data?.speech_data) {
-        setSpeechInputs(data.speech_data);
-        setInitialSpeechInputs(data.speech_data);
+        const fields = unpackSpeechData(data.speech_data);
+        setSpeechInputs(fields);
+        setInitialSpeechInputs(fields);
       } else {
         setSpeechInputs(DEFAULT_SPEECH);
         setInitialSpeechInputs(DEFAULT_SPEECH);
@@ -568,7 +596,7 @@ export default function App() {
       setSaveStatus('saving');
 
       const existingDebate = userDebatesMap[`${activeTopic.id}_${chosenStance}`];
-      const currentCompleted = existingDebate?.is_completed || false;
+      const currentCompleted = getDebateCompleted(existingDebate);
 
       const { error } = await supabase
         .from('user_debates')
@@ -577,8 +605,7 @@ export default function App() {
             user_id: session.user.id,
             topic_id: activeTopic.id,
             stance: chosenStance,
-            speech_data: speechInputs,
-            is_completed: currentCompleted,
+            speech_data: packSpeechData(speechInputs, currentCompleted),
             updated_at: new Date().toISOString(),
           },
           { onConflict: 'user_id,topic_id,stance' }
@@ -592,8 +619,14 @@ export default function App() {
       // Update local state map
       setUserDebatesMap((prev) => ({
         ...prev,
-        [`${activeTopic.id}_${chosenStance}`]: { speech_data: speechInputs, is_completed: currentCompleted },
-        [activeTopic.id]: { speech_data: speechInputs, is_completed: currentCompleted },
+        [`${activeTopic.id}_${chosenStance}`]: {
+          speech_data: speechInputs,
+          is_completed: currentCompleted,
+        },
+        [activeTopic.id]: {
+          speech_data: speechInputs,
+          is_completed: currentCompleted,
+        },
       }));
 
       setTimeout(() => setSaveStatus(''), 2500);
@@ -727,7 +760,7 @@ Return your response strictly in valid JSON format with no markdown formatting a
       const passedScoreThreshold = numericScore > 5;
 
       const existingDebate = userDebatesMap[`${activeTopic.id}_${chosenStance}`];
-      const isAlreadyCompleted = existingDebate?.is_completed || false;
+      const isAlreadyCompleted = getDebateCompleted(existingDebate);
 
       // Update Supabase if score > 5
       if (passedScoreThreshold) {
@@ -738,8 +771,7 @@ Return your response strictly in valid JSON format with no markdown formatting a
               user_id: session.user.id,
               topic_id: activeTopic.id,
               stance: chosenStance,
-              speech_data: speechInputs,
-              is_completed: true,
+              speech_data: packSpeechData(speechInputs, true),
               updated_at: new Date().toISOString(),
             },
             { onConflict: 'user_id,topic_id,stance' }
@@ -747,8 +779,14 @@ Return your response strictly in valid JSON format with no markdown formatting a
 
         setUserDebatesMap((prev) => ({
           ...prev,
-          [`${activeTopic.id}_${chosenStance}`]: { speech_data: speechInputs, is_completed: true },
-          [activeTopic.id]: { speech_data: speechInputs, is_completed: true },
+          [`${activeTopic.id}_${chosenStance}`]: {
+            speech_data: speechInputs,
+            is_completed: true,
+          },
+          [activeTopic.id]: {
+            speech_data: speechInputs,
+            is_completed: true,
+          },
         }));
 
         if (!isAlreadyCompleted) {
