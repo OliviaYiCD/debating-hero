@@ -63,6 +63,27 @@ const getDebateCompleted = (debate) => {
   return Boolean(debate.speech_data?.[SPEECH_META_KEY]?.is_completed);
 };
 
+// Compact pagination: 1, 2, …, last (includes current when needed)
+const getCompactPageItems = (currentPage, totalPages) => {
+  if (totalPages <= 3) {
+    return Array.from({ length: totalPages }, (_, i) => i + 1);
+  }
+
+  const pages = new Set([1, 2, totalPages, currentPage]);
+  const sorted = [...pages]
+    .filter((page) => page >= 1 && page <= totalPages)
+    .sort((a, b) => a - b);
+
+  const items = [];
+  for (let i = 0; i < sorted.length; i++) {
+    if (i > 0 && sorted[i] - sorted[i - 1] > 1) {
+      items.push('ellipsis');
+    }
+    items.push(sorted[i]);
+  }
+  return items;
+};
+
 export default function App() {
   const [activeTab, setActiveTab] = useState('explorer'); // 'explorer' | 'my-topics' | 'arena' | 'hub' | 'profile'
   const [selectedFilter, setSelectedFilter] = useState('All Topics');
@@ -1345,13 +1366,13 @@ Return your response strictly in valid JSON format with no markdown formatting a
       </aside>
 
       {/* Main Full-Width Area */}
-      <div className="flex-1 flex flex-col h-screen overflow-y-auto w-full">
+      <div className="flex-1 flex flex-col h-screen overflow-y-auto w-full pb-20 md:pb-0">
         {/* TOP HEADER WITH XP BAR AND DUOLINGO-STYLE STREAK COUNTER */}
-        <header className="bg-white border-b border-slate-200/80 px-8 py-3 flex justify-between items-center shrink-0 w-full shadow-2xs relative">
-          <div className="flex items-center space-x-5">
+        <header className="bg-white border-b border-slate-200/80 px-4 md:px-8 py-3 flex justify-between items-center shrink-0 w-full shadow-2xs relative gap-2">
+          <div className="flex items-center space-x-3 md:space-x-5 min-w-0">
             
             {/* DUOLINGO DAILY STREAK FLAME WIDGET */}
-            <div className="relative">
+            <div className="relative shrink-0">
               <button
                 onClick={() => setShowStreakModal((prev) => !prev)}
                 className={`flex items-center space-x-1.5 px-3 py-1 rounded-xl font-extrabold text-xs border transition cursor-pointer shadow-2xs ${
@@ -1388,23 +1409,23 @@ Return your response strictly in valid JSON format with no markdown formatting a
             </div>
 
             {/* LEVEL & XP PROGRESS BAR */}
-            <div className="flex items-center space-x-3">
-              <span className="text-xs font-extrabold text-amber-500 uppercase tracking-wide">
+            <div className="flex items-center space-x-2 md:space-x-3 min-w-0">
+              <span className="text-[10px] md:text-xs font-extrabold text-amber-500 uppercase tracking-wide shrink-0">
                 HERO LEVEL {currentLevel}
               </span>
-              <div className="w-48 bg-slate-100 h-3 rounded-full overflow-hidden border border-slate-200/60">
+              <div className="w-20 sm:w-32 md:w-48 bg-slate-100 h-3 rounded-full overflow-hidden border border-slate-200/60">
                 <div
                   className="bg-gradient-to-r from-amber-400 to-amber-500 h-full rounded-full transition-all duration-500"
                   style={{ width: `${(xpInCurrentLevel / XP_PER_LEVEL) * 100}%` }}
                 ></div>
               </div>
-              <span className="text-xs text-slate-500 font-mono font-bold">
-                {xpInCurrentLevel} / {XP_PER_LEVEL} XP
+              <span className="text-[10px] md:text-xs text-slate-500 font-mono font-bold shrink-0">
+                {xpInCurrentLevel} / {XP_PER_LEVEL}
               </span>
             </div>
           </div>
 
-          <div className="flex items-center space-x-3">
+          <div className="flex items-center space-x-1 md:space-x-3 shrink-0">
             {session && (() => {
               const { initial } = getHeroInfo(profile, session);
               return (
@@ -1416,8 +1437,8 @@ Return your response strictly in valid JSON format with no markdown formatting a
                 </div>
               );
             })()}
-            <button className="p-2 text-slate-400 hover:text-slate-600 cursor-pointer">🔔</button>
-            <button className="p-2 text-slate-400 hover:text-slate-600 cursor-pointer">⚙️</button>
+            <button className="hidden sm:block p-2 text-slate-400 hover:text-slate-600 cursor-pointer">🔔</button>
+            <button className="hidden sm:block p-2 text-slate-400 hover:text-slate-600 cursor-pointer">⚙️</button>
           </div>
         </header>
 
@@ -1555,7 +1576,7 @@ Return your response strictly in valid JSON format with no markdown formatting a
 
                 {/* PAGINATION CONTROLS */}
                 {totalPages > 1 && (
-                  <div className="flex justify-between items-center pt-6 border-t border-slate-200/80">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:justify-between sm:items-center pt-6 border-t border-slate-200/80">
                     <span className="text-xs text-slate-500 font-medium">
                       Showing <span className="font-bold text-slate-800">{startIndex + 1}</span> -{' '}
                       <span className="font-bold text-slate-800">
@@ -1564,33 +1585,42 @@ Return your response strictly in valid JSON format with no markdown formatting a
                       of <span className="font-bold text-slate-800">{filteredTopics.length}</span> topics
                     </span>
 
-                    <div className="flex items-center space-x-1.5">
+                    <div className="flex items-center flex-wrap gap-1.5">
                       <button
                         onClick={() => setCurrentPage((prev) => Math.max(prev - 1, 1))}
                         disabled={currentPage === 1}
-                        className="px-3.5 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition shadow-2xs cursor-pointer"
+                        className="px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition shadow-2xs cursor-pointer"
                       >
                         ← Prev
                       </button>
 
-                      {Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => (
-                        <button
-                          key={page}
-                          onClick={() => setCurrentPage(page)}
-                          className={`w-9 h-9 rounded-xl text-xs font-bold transition cursor-pointer ${
-                            currentPage === page
-                              ? 'bg-blue-600 text-white shadow-md shadow-blue-500/20'
-                              : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200/80'
-                          }`}
-                        >
-                          {page}
-                        </button>
-                      ))}
+                      {getCompactPageItems(currentPage, totalPages).map((item, index) =>
+                        item === 'ellipsis' ? (
+                          <span
+                            key={`ellipsis-${index}`}
+                            className="w-8 h-9 flex items-center justify-center text-xs font-bold text-slate-400"
+                          >
+                            …
+                          </span>
+                        ) : (
+                          <button
+                            key={item}
+                            onClick={() => setCurrentPage(item)}
+                            className={`w-9 h-9 rounded-xl text-xs font-bold transition cursor-pointer ${
+                              currentPage === item
+                                ? 'bg-blue-600 text-white shadow-md shadow-blue-500/20'
+                                : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200/80'
+                            }`}
+                          >
+                            {item}
+                          </button>
+                        )
+                      )}
 
                       <button
                         onClick={() => setCurrentPage((prev) => Math.min(prev + 1, totalPages))}
                         disabled={currentPage === totalPages}
-                        className="px-3.5 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition shadow-2xs cursor-pointer"
+                        className="px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition shadow-2xs cursor-pointer"
                       >
                         Next →
                       </button>
@@ -2338,7 +2368,7 @@ Return your response strictly in valid JSON format with no markdown formatting a
 
                     {/* HUMANITIES PAGINATION CONTROLS */}
                     {totalHumanitiesPages > 1 && (
-                      <div className="flex justify-between items-center pt-6 border-t border-slate-200/80">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:justify-between sm:items-center pt-6 border-t border-slate-200/80">
                         <span className="text-xs text-slate-500 font-medium">
                           Showing <span className="font-bold text-slate-800">{humanitiesStartIndex + 1}</span> -{' '}
                           <span className="font-bold text-slate-800">
@@ -2347,33 +2377,42 @@ Return your response strictly in valid JSON format with no markdown formatting a
                           of <span className="font-bold text-slate-800">{filteredHumanities.length}</span> knowledge topics
                         </span>
 
-                        <div className="flex items-center space-x-1.5">
+                        <div className="flex items-center flex-wrap gap-1.5">
                           <button
                             onClick={() => setHumanitiesPage((prev) => Math.max(prev - 1, 1))}
                             disabled={humanitiesPage === 1}
-                            className="px-3.5 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition shadow-2xs cursor-pointer"
+                            className="px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition shadow-2xs cursor-pointer"
                           >
                             ← Prev
                           </button>
 
-                          {Array.from({ length: totalHumanitiesPages }, (_, i) => i + 1).map((page) => (
-                            <button
-                              key={page}
-                              onClick={() => setHumanitiesPage(page)}
-                              className={`w-9 h-9 rounded-xl text-xs font-bold transition cursor-pointer ${
-                                humanitiesPage === page
-                                  ? 'bg-purple-700 text-white shadow-md shadow-purple-500/20'
-                                  : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200/80'
-                              }`}
-                            >
-                              {page}
-                            </button>
-                          ))}
+                          {getCompactPageItems(humanitiesPage, totalHumanitiesPages).map((item, index) =>
+                            item === 'ellipsis' ? (
+                              <span
+                                key={`ellipsis-${index}`}
+                                className="w-8 h-9 flex items-center justify-center text-xs font-bold text-slate-400"
+                              >
+                                …
+                              </span>
+                            ) : (
+                              <button
+                                key={item}
+                                onClick={() => setHumanitiesPage(item)}
+                                className={`w-9 h-9 rounded-xl text-xs font-bold transition cursor-pointer ${
+                                  humanitiesPage === item
+                                    ? 'bg-purple-700 text-white shadow-md shadow-purple-500/20'
+                                    : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200/80'
+                                }`}
+                              >
+                                {item}
+                              </button>
+                            )
+                          )}
 
                           <button
                             onClick={() => setHumanitiesPage((prev) => Math.min(prev + 1, totalHumanitiesPages))}
                             disabled={humanitiesPage === totalHumanitiesPages}
-                            className="px-3.5 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition shadow-2xs cursor-pointer"
+                            className="px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition shadow-2xs cursor-pointer"
                           >
                             Next →
                           </button>
@@ -2455,6 +2494,34 @@ Return your response strictly in valid JSON format with no markdown formatting a
           </main>
         )}
       </div>
+
+      {/* Mobile bottom navigation (sidebar is hidden below md) */}
+      <nav className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-white/95 backdrop-blur-sm border-t border-slate-200 px-1 pt-1.5 pb-[max(0.5rem,env(safe-area-inset-bottom))] shadow-[0_-4px_20px_rgba(15,23,42,0.06)]">
+        <div className="flex items-stretch justify-around gap-0.5">
+          {[
+            { id: 'explorer', label: 'Explorer', icon: '🧭' },
+            { id: 'my-topics', label: 'My Topics', icon: '✍️' },
+            { id: 'hub', label: 'Hub', icon: '🎓' },
+            { id: 'profile', label: 'Profile', icon: '🛡️' },
+          ].map((item) => {
+            const isActive = activeTab === item.id;
+            return (
+              <button
+                key={item.id}
+                onClick={() => setActiveTab(item.id)}
+                className={`flex-1 flex flex-col items-center justify-center gap-0.5 py-2 px-1 rounded-xl text-[10px] font-bold transition cursor-pointer ${
+                  isActive
+                    ? 'bg-blue-50 text-blue-700'
+                    : 'text-slate-500 hover:bg-slate-50'
+                }`}
+              >
+                <span className="text-base leading-none">{item.icon}</span>
+                <span className="leading-tight truncate max-w-full">{item.label}</span>
+              </button>
+            );
+          })}
+        </div>
+      </nav>
     </div>
   );
 }
