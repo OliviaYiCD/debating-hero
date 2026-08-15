@@ -88,7 +88,7 @@ export default function App() {
 
   // AI Score Modal State
   const [loadingAiScore, setLoadingAiScore] = useState(false);
-  const [aiScoreData, setAiScoreData] = useState(null); // { score, feedbackText, strengths, improvements }
+  const [aiScoreData, setAiScoreData] = useState(null); // { score, passed, strengths, improvements, summary, isAlreadyCompleted }
 
   // Streak Widget Popover State
   const [showStreakModal, setShowStreakModal] = useState(false);
@@ -554,7 +554,7 @@ export default function App() {
     return requiredKeys.every((key) => speechInputs[key] && speechInputs[key].trim().length > 0);
   };
 
-  // Save Progress (NO XP awarded here - saves WIP status)
+  // Save Progress (Saves WIP status to database)
   const handleSaveSpeech = async () => {
     if (!session) {
       setShowAuthModal(true);
@@ -654,7 +654,7 @@ Task:
     }
   };
 
-  // AI Speech Evaluation, Scoring (1-10 Score), and Completion Logic (+10 XP IF SCORE > 5)
+  // AI Speech Evaluation, Scoring (Enforced JSON Parsing), and Completion Logic (+10 XP IF SCORE > 5)
   const handleEvaluateFullSpeech = async () => {
     if (!session) {
       setShowAuthModal(true);
@@ -684,21 +684,22 @@ Task:
 
       const ai = new GoogleGenAI({ apiKey });
 
-      const promptText = `You are a friendly, fair youth debate judge evaluating a student (age 10-14).
-Evaluate the complete debate speech below for clarity, relevant arguments, and effort. If the text consists of gibberish, random letters, or meaningless filler, give it a score lower than 5.
+      const promptText = `You are a friendly youth debate judge for kids (age 10-14).
+Evaluate the complete speech draft below.
+IMPORTANT: Return ONLY raw JSON without markdown formatting or code blocks.
 
 Topic: "${activeTopic.title}"
 Stance: ${chosenStance}
 
-Full Speech Draft:
+Speech:
 ${speechText}
 
-Return your response strictly in valid JSON format with no markdown formatting around it:
+JSON structure:
 {
-  "score": <number from 1 to 10>,
-  "strengths": ["point 1", "point 2"],
-  "improvements": ["point 1", "point 2"],
-  "summary": "<2 sentence summary advice>"
+  "score": <integer from 1 to 10>,
+  "strengths": ["string"],
+  "improvements": ["string"],
+  "summary": "short encouraging summary"
 }`;
 
       const response = await ai.models.generateContent({
@@ -709,17 +710,16 @@ Return your response strictly in valid JSON format with no markdown formatting a
       let parsedResult;
       try {
         const cleanText = (response.text || '')
-          .replace(/```json/g, '')
+          .replace(/```json/gi, '')
           .replace(/```/g, '')
           .trim();
         parsedResult = JSON.parse(cleanText);
       } catch (e) {
-        // Fallback if parsing fails
         parsedResult = {
-          score: 6,
-          strengths: ['Great effort in putting together a full speech!'],
-          improvements: ['Work on expanding your reasons using the AREO formula.'],
-          summary: 'A solid attempt at crafting your speech draft!',
+          score: 4,
+          strengths: ['Outlined speech structure.'],
+          improvements: ['Add more details and reasons to your points.'],
+          summary: 'Solid foundation! Expand your arguments using AREO to score >5 and complete.',
         };
       }
 
@@ -729,7 +729,6 @@ Return your response strictly in valid JSON format with no markdown formatting a
       const existingDebate = userDebatesMap[`${activeTopic.id}_${chosenStance}`];
       const isAlreadyCompleted = existingDebate?.is_completed || false;
 
-      // Update Supabase if score > 5
       if (passedScoreThreshold) {
         await supabase
           .from('user_debates')
@@ -1056,7 +1055,7 @@ Return your response strictly in valid JSON format with no markdown formatting a
             <div className="flex justify-between items-center border-b border-slate-100 pb-3">
               <div className="flex items-center space-x-2">
                 <span className="text-2xl">📊</span>
-                <h3 className="text-lg font-black text-blue-950">AI Speech Score & Feedback</h3>
+                <h3 className="text-lg font-black text-blue-950">AI Speech Score & Judge Feedback</h3>
               </div>
               <button
                 onClick={() => setAiScoreData(null)}
@@ -1066,38 +1065,51 @@ Return your response strictly in valid JSON format with no markdown formatting a
               </button>
             </div>
 
-            {/* Score Banner & Outcome */}
+            {/* High-visibility Score Badge */}
             <div
-              className={`p-5 rounded-2xl text-center border flex flex-col items-center justify-center space-y-1.5 ${
+              className={`p-5 rounded-2xl text-center border flex flex-col items-center justify-center space-y-1 ${
                 aiScoreData.passed
                   ? 'bg-emerald-50 border-emerald-200 text-emerald-950'
                   : 'bg-amber-50 border-amber-200 text-amber-950'
               }`}
             >
-              <div className="text-4xl font-black">
-                {aiScoreData.score} / 10
+              <span className="text-[11px] font-black uppercase tracking-wider text-slate-500">Overall Score</span>
+              <div className="text-5xl font-black tracking-tight">
+                {aiScoreData.score} <span className="text-2xl text-slate-400 font-bold">/ 10</span>
               </div>
-              <div className="text-xs font-black uppercase tracking-wider">
-                {aiScoreData.passed
-                  ? '🎉 Topic Passed & Completed!'
-                  : '⚡ Score 5 or lower — Revision Needed!'}
+              
+              <div className="pt-2">
+                {aiScoreData.passed ? (
+                  <span className="px-3 py-1 bg-emerald-600 text-white font-black text-xs rounded-full shadow-xs">
+                    🎉 PASSED! (+10 XP)
+                  </span>
+                ) : (
+                  <span className="px-3 py-1 bg-amber-600 text-white font-black text-xs rounded-full shadow-xs">
+                    ⚡ SCORE TOO LOW (&le; 5) — REVISION NEEDED
+                  </span>
+                )}
               </div>
-              <p className="text-[11px] font-medium text-slate-600 max-w-xs leading-relaxed">
+
+              <p className="text-xs font-medium text-slate-600 max-w-sm leading-relaxed pt-2">
                 {aiScoreData.passed
                   ? aiScoreData.isAlreadyCompleted
-                    ? 'You have already earned your +10 XP for completing this topic!'
-                    : 'Great effort! You earned +10 XP for passing this topic!'
-                  : 'To unlock your +10 XP and complete this topic, refine your points and score higher than 5.'}
+                    ? 'You have already completed this topic and claimed your XP!'
+                    : 'Great work! You scored over 5/10 and earned +10 XP!'
+                  : 'You need a score of at least 6/10 to earn your 10 XP and mark this topic complete. Polish your points and try again!'}
               </p>
             </div>
 
-            {/* Detailed Feedback Breakdown */}
-            <div className="space-y-3 max-h-60 overflow-y-auto text-xs pr-1">
+            {/* Formatted Feedback Lists */}
+            <div className="space-y-3 max-h-56 overflow-y-auto text-xs pr-1">
+              {aiScoreData.summary && (
+                <div className="bg-blue-50/70 border border-blue-100 rounded-xl p-3 text-slate-700 font-medium">
+                  "{aiScoreData.summary}"
+                </div>
+              )}
+
               {aiScoreData.strengths.length > 0 && (
-                <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-3.5 space-y-1.5">
-                  <span className="font-extrabold text-slate-800 flex items-center gap-1 text-[11px]">
-                    💪 Key Strengths:
-                  </span>
+                <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-3.5 space-y-1">
+                  <span className="font-extrabold text-slate-800 text-[11px]">💪 Key Strengths:</span>
                   <ul className="list-disc list-inside space-y-1 text-slate-600">
                     {aiScoreData.strengths.map((str, idx) => (
                       <li key={idx}>{str}</li>
@@ -1107,10 +1119,8 @@ Return your response strictly in valid JSON format with no markdown formatting a
               )}
 
               {aiScoreData.improvements.length > 0 && (
-                <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-3.5 space-y-1.5">
-                  <span className="font-extrabold text-slate-800 flex items-center gap-1 text-[11px]">
-                    🎯 Areas to Improve:
-                  </span>
+                <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-3.5 space-y-1">
+                  <span className="font-extrabold text-slate-800 text-[11px]">🎯 How to Reach &gt; 5/10:</span>
                   <ul className="list-disc list-inside space-y-1 text-slate-600">
                     {aiScoreData.improvements.map((imp, idx) => (
                       <li key={idx}>{imp}</li>
@@ -1118,22 +1128,14 @@ Return your response strictly in valid JSON format with no markdown formatting a
                   </ul>
                 </div>
               )}
-
-              {aiScoreData.summary && (
-                <div className="bg-blue-50/60 border border-blue-100 rounded-xl p-3.5 text-slate-700 italic">
-                  "{aiScoreData.summary}"
-                </div>
-              )}
             </div>
 
-            <div className="flex gap-3 pt-2">
-              <button
-                onClick={() => setAiScoreData(null)}
-                className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-xs rounded-xl shadow-md transition cursor-pointer"
-              >
-                Back to Practice ⚔️
-              </button>
-            </div>
+            <button
+              onClick={() => setAiScoreData(null)}
+              className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-xs rounded-xl shadow-md transition cursor-pointer"
+            >
+              Back to Practice ⚔️
+            </button>
           </div>
         </div>
       )}
@@ -1731,41 +1733,46 @@ Return your response strictly in valid JSON format with no markdown formatting a
                 <h2 className="text-2xl font-black mt-2">{activeTopic.title}</h2>
               </div>
 
-              {/* ACTION BUTTONS: SAVE PROGRESS + COMPLETE TOPIC (AI SCORE > 5) */}
-              <div className="flex flex-wrap items-center gap-2.5 shrink-0">
-                <button
-                  onClick={handleSaveSpeech}
-                  disabled={isSaving || !hasUnsavedChanges}
-                  className={`px-3.5 py-2.5 rounded-xl text-xs font-extrabold transition shadow-md flex items-center space-x-1.5 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${
-                    saveStatus === 'saved'
-                      ? 'bg-emerald-500 text-white'
-                      : saveStatus === 'error'
-                      ? 'bg-rose-500 text-white'
-                      : 'bg-white text-blue-600 hover:bg-blue-50'
-                  }`}
-                >
-                  <span>💾</span>
-                  <span>
-                    {isSaving
-                      ? 'Saving...'
-                      : saveStatus === 'saved'
-                      ? '✓ Saved!'
-                      : saveStatus === 'error'
-                      ? 'Error Saving'
-                      : hasUnsavedChanges
-                      ? 'Save Progress'
-                      : 'Saved'}
-                  </span>
-                </button>
+              {/* ACTION BUTTONS: SAVE PROGRESS & COMBINED EVALUATION/SUBMIT */}
+              <div className="flex flex-col items-end gap-1 shrink-0">
+                <div className="flex flex-wrap items-center gap-2.5">
+                  <button
+                    onClick={handleSaveSpeech}
+                    disabled={isSaving || !hasUnsavedChanges}
+                    className={`px-3.5 py-2.5 rounded-xl text-xs font-extrabold transition shadow-md flex items-center space-x-1.5 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${
+                      saveStatus === 'saved'
+                        ? 'bg-emerald-500 text-white'
+                        : saveStatus === 'error'
+                        ? 'bg-rose-500 text-white'
+                        : 'bg-white text-blue-600 hover:bg-blue-50'
+                    }`}
+                  >
+                    <span>💾</span>
+                    <span>
+                      {isSaving
+                        ? 'Saving...'
+                        : saveStatus === 'saved'
+                        ? '✓ Saved!'
+                        : saveStatus === 'error'
+                        ? 'Error Saving'
+                        : hasUnsavedChanges
+                        ? 'Save Progress'
+                        : 'Saved'}
+                    </span>
+                  </button>
 
-                <button
-                  onClick={handleEvaluateFullSpeech}
-                  disabled={loadingAiScore || !isSpeechFullyCompleted()}
-                  className="px-4 py-2.5 bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-slate-900 font-extrabold text-xs rounded-xl shadow-md transition flex items-center space-x-1.5 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-                >
-                  <span>🏆</span>
-                  <span>{loadingAiScore ? 'Judging Speech...' : 'Submit to AI Score (+10 XP)'}</span>
-                </button>
+                  <button
+                    onClick={handleEvaluateFullSpeech}
+                    disabled={loadingAiScore || !isSpeechFullyCompleted()}
+                    className="px-4 py-2.5 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white font-extrabold text-xs rounded-xl shadow-md transition flex items-center space-x-1.5 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    <span>🏆</span>
+                    <span>{loadingAiScore ? 'Evaluating Speech...' : 'Submit & Score with AI (+10 XP)'}</span>
+                  </button>
+                </div>
+                <span className="text-[10px] text-blue-100 font-medium">
+                  * Score higher than 5/10 to earn 10 XP & complete topic
+                </span>
               </div>
             </div>
 
@@ -1884,7 +1891,7 @@ Return your response strictly in valid JSON format with no markdown formatting a
                     </span>
                   </div>
                   <p className="text-xs text-slate-500 leading-relaxed">
-                    Fill out all text fields, then click <strong>Submit to AI Score (+10 XP)</strong>. Score <strong>higher than 5/10</strong> to complete the topic and earn your XP!
+                    Fill out all text fields, then click <strong>Submit & Score with AI (+10 XP)</strong>. Score <strong>higher than 5/10</strong> to complete the topic and earn your XP!
                   </p>
                 </div>
 
