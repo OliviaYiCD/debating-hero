@@ -569,7 +569,7 @@ export default function App() {
 
       const ai = new GoogleGenAI({ apiKey });
 
-      const prompt = `You are an encouraging debating coach for kids aged 10-14.
+      const promptText = `You are an encouraging debating coach for kids aged 10-14.
 Help polish the student's debate speech section for maximum impact, clarity, and strong signposting (like "Firstly", "Furthermore", "This proves that...").
 Keep your tone energetic, constructive, and age-appropriate.
 
@@ -584,7 +584,7 @@ Task:
 
       const response = await ai.models.generateContent({
         model: 'gemini-2.5-flash',
-        contents: prompt,
+        contents: promptText,
       });
 
       const feedbackText =
