@@ -4,6 +4,17 @@ import { supabase } from './supabaseClient';
 import AuthModal from './components/AuthModal';
 
 const ITEMS_PER_PAGE = 12;
+const HUMANITIES_PER_PAGE = 12;
+const XP_PER_LEVEL = 100; // 100 XP = 1 Level
+
+// Rank Title Helper based on Level
+const getRankTitle = (level) => {
+  if (level >= 10) return 'Legendary Orator 🏆';
+  if (level >= 7) return 'Debate Champion ⚔️';
+  if (level >= 5) return 'Master Rhetorician 📜';
+  if (level >= 3) return 'Apprentice Speaker 🎙️';
+  return 'Novice Debater 🌱';
+};
 
 // Helper to derive display name and avatar initial
 const getHeroInfo = (profile, session) => {
@@ -19,19 +30,39 @@ const getHeroInfo = (profile, session) => {
 };
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState('explorer'); // 'explorer' | 'arena' | 'hub' | 'profile'
+  const [activeTab, setActiveTab] = useState('explorer'); // 'explorer' | 'my-topics' | 'arena' | 'hub' | 'profile'
   const [selectedFilter, setSelectedFilter] = useState('All Topics');
   const [searchQuery, setSearchQuery] = useState('');
 
-  // Pagination State
+  // Topic Pagination State
   const [currentPage, setCurrentPage] = useState(1);
 
   // Database Topics State
   const [topics, setTopics] = useState([]);
+  const [myTopics, setMyTopics] = useState([]); // Custom User Topics
   const [loadingTopics, setLoadingTopics] = useState(true);
   const [selectedTopicModal, setSelectedTopicModal] = useState(null); // Active Topic Modal
   const [activeTopic, setActiveTopic] = useState(null);               // Topic being practiced
   const [chosenStance, setChosenStance] = useState('Affirmative');     // 'Affirmative' | 'Negative'
+
+  // Custom Topic Form Input State
+  const [newTopicTitle, setNewTopicTitle] = useState('');
+  const [newTopicDesc, setNewTopicDesc] = useState('');
+  const [isCreatingTopic, setIsCreatingTopic] = useState(false);
+
+  // Editing Custom Topic State
+  const [editingTopicId, setEditingTopicId] = useState(null);
+  const [editTopicTitle, setEditTopicTitle] = useState('');
+  const [editTopicDesc, setEditTopicDesc] = useState('');
+
+  // Database Humanities Knowledge State
+  const [humanitiesData, setHumanitiesData] = useState([]);
+  const [loadingHumanities, setLoadingHumanities] = useState(true);
+  const [selectedHumanitiesFilter, setSelectedHumanitiesFilter] = useState('All');
+  
+  // Humanities Pagination & "I Know" Tracking State
+  const [humanitiesPage, setHumanitiesPage] = useState(1);
+  const [knownItems, setKnownItems] = useState(new Set()); // Set of known item IDs
 
   // Save State
   const [isSaving, setIsSaving] = useState(false);
@@ -40,6 +71,12 @@ export default function App() {
   // AI Feedback Modal / Loading State
   const [loadingAiStage, setLoadingAiStage] = useState(''); // Stores stage key currently calling AI
   const [aiModalContent, setAiModalContent] = useState(null); // { stageKey, stageName, feedbackText }
+
+  // Streak Widget Popover State
+  const [showStreakModal, setShowStreakModal] = useState(false);
+
+  // Auth Modal Visibility State for Landing Page
+  const [showAuthModal, setShowAuthModal] = useState(false);
 
   // Arena Speech Input State
   const [speechInputs, setSpeechInputs] = useState({
@@ -63,10 +100,103 @@ export default function App() {
   const [session, setSession] = useState(null);
   const [profile, setProfile] = useState(null);
 
-  // Fetch Topics from Supabase DB
+  // Toast Notification State for Level Up / XP Earned
+  const [xpToast, setXpToast] = useState('');
+
+  // Fetch Topics & Humanities Knowledge from Supabase DB
   useEffect(() => {
     fetchTopics();
+    fetchHumanitiesData();
   }, []);
+
+  const showXpToast = (msg) => {
+    setXpToast(msg);
+    setTimeout(() => setXpToast(''), 3000);
+  };
+
+  // Check & Update Daily Streak Logic
+  const checkAndUpdateStreak = async (currentProfile) => {
+    if (!session || !currentProfile) return currentProfile?.streak_count || 0;
+
+    const todayStr = new Date().toISOString().split('T')[0];
+    const lastActive = currentProfile.last_active_date;
+    let newStreak = currentProfile.streak_count || 0;
+
+    if (!lastActive) {
+      newStreak = 1;
+    } else if (lastActive === todayStr) {
+      return newStreak;
+    } else {
+      const lastDate = new Date(lastActive);
+      const todayDate = new Date(todayStr);
+      const diffTime = Math.abs(todayDate - lastDate);
+      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+      if (diffDays === 1) {
+        newStreak += 1;
+      } else if (diffDays > 1) {
+        newStreak = 1;
+      }
+    }
+
+    setProfile((prev) => ({
+      ...prev,
+      streak_count: newStreak,
+      last_active_date: todayStr,
+    }));
+
+    try {
+      await supabase
+        .from('profiles')
+        .update({
+          streak_count: newStreak,
+          last_active_date: todayStr,
+        })
+        .eq('id', session.user.id);
+    } catch (err) {
+      console.error('Error updating daily streak:', err.message);
+    }
+
+    return newStreak;
+  };
+
+  const awardUserXp = async (xpAmount) => {
+    if (!session || !profile) return;
+
+    await checkAndUpdateStreak(profile);
+
+    const newXp = Math.max(0, (profile.xp || 0) + xpAmount);
+    const newLevel = Math.floor(newXp / XP_PER_LEVEL) + 1;
+    const newRankTitle = getRankTitle(newLevel);
+
+    const leveledUp = newLevel > (profile.level || 1);
+
+    setProfile((prev) => ({
+      ...prev,
+      xp: newXp,
+      level: newLevel,
+      rank_title: newRankTitle,
+    }));
+
+    if (leveledUp) {
+      showXpToast(`🎉 LEVEL UP! You are now Level ${newLevel} (${newRankTitle})!`);
+    } else if (xpAmount > 0) {
+      showXpToast(`+${xpAmount} XP Earned! 🌟`);
+    }
+
+    try {
+      await supabase
+        .from('profiles')
+        .update({
+          xp: newXp,
+          level: newLevel,
+          rank_title: newRankTitle,
+        })
+        .eq('id', session.user.id);
+    } catch (err) {
+      console.error('Error updating XP in profile:', err.message);
+    }
+  };
 
   const fetchTopics = async () => {
     try {
@@ -88,17 +218,180 @@ export default function App() {
     }
   };
 
-  // Listen to Supabase Auth State Changes
+  const fetchMyTopics = async (userId) => {
+    try {
+      const { data, error } = await supabase
+        .from('user_topics')
+        .select('*')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+
+      if (data) {
+        setMyTopics(data);
+      }
+    } catch (err) {
+      console.error('Error fetching custom user topics:', err.message);
+    }
+  };
+
+  const handleCreateCustomTopic = async (e) => {
+    e.preventDefault();
+    if (!newTopicTitle.trim()) return;
+
+    if (!session) {
+      setShowAuthModal(true);
+      return;
+    }
+
+    try {
+      setIsCreatingTopic(true);
+      const newTopicObj = {
+        user_id: session.user.id,
+        title: newTopicTitle.trim(),
+        description: newTopicDesc.trim() || 'Custom user created topic.',
+        category: 'Custom',
+        difficulty: 1,
+      };
+
+      const { data, error } = await supabase
+        .from('user_topics')
+        .insert([newTopicObj])
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      if (data) {
+        setMyTopics((prev) => [data, ...prev]);
+        setNewTopicTitle('');
+        setNewTopicDesc('');
+        awardUserXp(10);
+      }
+    } catch (err) {
+      console.error('Error saving custom topic:', err.message);
+      alert('Could not save custom topic. Please check your connection.');
+    } finally {
+      setIsCreatingTopic(false);
+    }
+  };
+
+  const handleStartEdit = (topic) => {
+    setEditingTopicId(topic.id);
+    setEditTopicTitle(topic.title);
+    setEditTopicDesc(topic.description || '');
+  };
+
+  const handleSaveEdit = async (topicId) => {
+    if (!editTopicTitle.trim()) return;
+
+    try {
+      const { error } = await supabase
+        .from('user_topics')
+        .update({
+          title: editTopicTitle.trim(),
+          description: editTopicDesc.trim() || 'Custom user created topic.',
+        })
+        .eq('id', topicId)
+        .eq('user_id', session.user.id);
+
+      if (error) throw error;
+
+      setMyTopics((prev) =>
+        prev.map((t) =>
+          t.id === topicId
+            ? { ...t, title: editTopicTitle.trim(), description: editTopicDesc.trim() || 'Custom user created topic.' }
+            : t
+        )
+      );
+
+      setEditingTopicId(null);
+    } catch (err) {
+      console.error('Error updating topic:', err.message);
+      alert('Failed to update topic.');
+    }
+  };
+
+  const handleDeleteTopic = async (topicId) => {
+    if (!window.confirm('Are you sure you want to delete this topic?')) return;
+
+    try {
+      const { error } = await supabase
+        .from('user_topics')
+        .delete()
+        .eq('id', topicId)
+        .eq('user_id', session.user.id);
+
+      if (error) throw error;
+
+      setMyTopics((prev) => prev.filter((t) => t.id !== topicId));
+    } catch (err) {
+      console.error('Error deleting topic:', err.message);
+      alert('Failed to delete topic.');
+    }
+  };
+
+  const fetchHumanitiesData = async () => {
+    try {
+      setLoadingHumanities(true);
+      const { data, error } = await supabase
+        .from('humanities_knowledge')
+        .select('*')
+        .order('created_at', { ascending: true });
+
+      if (error) throw error;
+
+      if (data) {
+        setHumanitiesData(data);
+      }
+    } catch (err) {
+      console.error('Error fetching humanities knowledge from Supabase:', err.message);
+    } finally {
+      setLoadingHumanities(false);
+    }
+  };
+
+  const fetchUserHumanitiesProgress = async (userId) => {
+    try {
+      const { data, error } = await supabase
+        .from('user_humanities_progress')
+        .select('humanities_id')
+        .eq('user_id', userId);
+
+      if (error) throw error;
+
+      if (data) {
+        const knownSet = new Set(data.map((row) => row.humanities_id));
+        setKnownItems(knownSet);
+      }
+    } catch (err) {
+      console.error('Error fetching humanities progress:', err.message);
+    }
+  };
+
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
-      if (session) fetchProfile(session.user);
+      if (session) {
+        fetchProfile(session.user);
+        fetchMyTopics(session.user.id);
+        fetchUserHumanitiesProgress(session.user.id);
+      }
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
-      if (session) fetchProfile(session.user);
-      else setProfile(null);
+      if (session) {
+        fetchProfile(session.user);
+        fetchMyTopics(session.user.id);
+        fetchUserHumanitiesProgress(session.user.id);
+        setShowAuthModal(false);
+      } else {
+        setProfile(null);
+        setMyTopics([]);
+        setKnownItems(new Set());
+      }
     });
 
     return () => subscription.unsubscribe();
@@ -126,6 +419,7 @@ export default function App() {
               level: 1,
               xp: 0,
               rank_title: 'Novice Debater',
+              streak_count: 0,
             },
           ])
           .select()
@@ -140,7 +434,53 @@ export default function App() {
     }
   };
 
-  // Fetch Existing Draft for Active Topic & Stance
+  const toggleKnowItem = async (itemId) => {
+    if (!session) {
+      setShowAuthModal(true);
+      return;
+    }
+
+    const isCurrentlyKnown = knownItems.has(itemId);
+
+    setKnownItems((prev) => {
+      const updated = new Set(prev);
+      if (isCurrentlyKnown) {
+        updated.delete(itemId);
+      } else {
+        updated.add(itemId);
+      }
+      return updated;
+    });
+
+    try {
+      if (isCurrentlyKnown) {
+        const { error } = await supabase
+          .from('user_humanities_progress')
+          .delete()
+          .eq('user_id', session.user.id)
+          .eq('humanities_id', itemId);
+
+        if (error) throw error;
+        awardUserXp(-10);
+      } else {
+        const { error } = await supabase
+          .from('user_humanities_progress')
+          .insert([{ user_id: session.user.id, humanities_id: itemId }]);
+
+        if (error) throw error;
+        awardUserXp(10);
+      }
+    } catch (err) {
+      console.error('Error syncing humanities progress:', err.message);
+      setKnownItems((prev) => {
+        const reverted = new Set(prev);
+        if (isCurrentlyKnown) reverted.add(itemId);
+        else reverted.delete(itemId);
+        return reverted;
+      });
+    }
+  };
+
   const loadSavedDraft = async (topicId, stance, userId) => {
     try {
       const { data, error } = await supabase
@@ -173,11 +513,9 @@ export default function App() {
     }
   };
 
-  // Save Speech Inputs to Supabase
   const handleSaveSpeech = async () => {
     if (!session) {
-      alert('Please sign in to save your progress!');
-      setActiveTab('profile');
+      setShowAuthModal(true);
       return;
     }
 
@@ -203,6 +541,7 @@ export default function App() {
       if (error) throw error;
 
       setSaveStatus('saved');
+      awardUserXp(10);
       setTimeout(() => setSaveStatus(''), 2500);
     } catch (err) {
       console.error('Error saving speech:', err.message);
@@ -212,7 +551,6 @@ export default function App() {
     }
   };
 
-  // Call Gemini AI Coach using official @google/genai SDK
   const handleCallGeminiCoach = async (stageKey, stageName) => {
     if (!activeTopic) return;
 
@@ -226,7 +564,6 @@ export default function App() {
         return;
       }
 
-      // Initialize Google Gen AI client with environment key
       const ai = new GoogleGenAI({ apiKey });
 
       const prompt = `You are an encouraging debating coach for kids aged 10-14.
@@ -263,7 +600,6 @@ Task:
     }
   };
 
-  // Handle Practice Session Launch
   const handleBeginPractice = () => {
     const topicToPractice = selectedTopicModal;
     setActiveTopic(topicToPractice);
@@ -300,6 +636,11 @@ Task:
     setCurrentPage(1);
   };
 
+  const handleHumanitiesFilterChange = (filterType) => {
+    setSelectedHumanitiesFilter(filterType);
+    setHumanitiesPage(1);
+  };
+
   const handleCopyPhrase = (phrase) => {
     navigator.clipboard.writeText(phrase);
     setCopiedPhrase(phrase);
@@ -314,7 +655,6 @@ Task:
     }));
   };
 
-  // Filter topics based on Category and Search Query
   const filteredTopics = topics.filter((t) => {
     const matchesCategory = selectedFilter === 'All Topics' || t.category === selectedFilter;
     const matchesSearch =
@@ -323,15 +663,162 @@ Task:
     return matchesCategory && matchesSearch;
   });
 
+  const filteredHumanities = humanitiesData.filter((item) => {
+    if (selectedHumanitiesFilter === 'All') return true;
+    return item.type?.toLowerCase() === selectedHumanitiesFilter.toLowerCase();
+  });
+
   const totalPages = Math.ceil(filteredTopics.length / ITEMS_PER_PAGE);
   const startIndex = (currentPage - 1) * ITEMS_PER_PAGE;
   const paginatedTopics = filteredTopics.slice(startIndex, startIndex + ITEMS_PER_PAGE);
 
+  const totalHumanitiesPages = Math.ceil(filteredHumanities.length / HUMANITIES_PER_PAGE);
+  const humanitiesStartIndex = (humanitiesPage - 1) * HUMANITIES_PER_PAGE;
+  const paginatedHumanities = filteredHumanities.slice(humanitiesStartIndex, humanitiesStartIndex + HUMANITIES_PER_PAGE);
+
   const renderStars = (count) => '★'.repeat(count || 1) + '☆'.repeat(3 - (count || 1));
 
+  const currentXp = profile?.xp || 0;
+  const currentLevel = Math.floor(currentXp / XP_PER_LEVEL) + 1;
+  const xpInCurrentLevel = currentXp % XP_PER_LEVEL;
+  const streakCount = profile?.streak_count || 0;
+
+  // ==========================================
+  // UNAUTHENTICATED LANDING PAGE
+  // ==========================================
+  if (!session) {
+    return (
+      <div className="min-h-screen bg-[#F0F3F8] font-sans text-slate-800 flex flex-col justify-between">
+        
+        {/* AUTH MODAL POPUP */}
+        {showAuthModal && (
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fadeIn">
+            <div className="relative w-full max-w-md">
+              <button
+                onClick={() => setShowAuthModal(false)}
+                className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 font-bold text-sm z-10 cursor-pointer"
+              >
+                ✕
+              </button>
+              <AuthModal onAuthSuccess={() => setShowAuthModal(false)} />
+            </div>
+          </div>
+        )}
+
+        {/* Landing Navbar */}
+        <header className="bg-white border-b border-slate-200/80 px-8 py-4 flex justify-between items-center shadow-2xs">
+          <div className="flex items-center space-x-3">
+            <div className="w-9 h-9 rounded-xl bg-blue-600 flex items-center justify-center text-white font-bold text-lg">
+              ⚔️
+            </div>
+            <h1 className="text-xl font-extrabold text-blue-900 tracking-tight">Debating Hero</h1>
+          </div>
+
+          <div className="flex items-center space-x-3">
+            <button
+              onClick={() => setShowAuthModal(true)}
+              className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-xs rounded-xl transition shadow-md shadow-blue-500/20 cursor-pointer"
+            >
+              Sign In / Get Started
+            </button>
+          </div>
+        </header>
+
+        {/* Hero Section */}
+        <main className="max-w-6xl mx-auto px-6 py-12 flex-1 flex flex-col justify-center space-y-12">
+          
+          <div className="text-center space-y-5 max-w-3xl mx-auto">
+            <span className="text-xs font-black uppercase tracking-widest px-3.5 py-1.5 rounded-full bg-blue-100 text-blue-700">
+              ⚔️ The Ultimate Debate Arena for Young Orators
+            </span>
+            <h2 className="text-4xl md:text-5xl font-black text-blue-950 leading-tight tracking-tight">
+              Build Confidence, Master Rhetoric & Level Up Your Speech Skills!
+            </h2>
+            <p className="text-sm md:text-base text-slate-600 leading-relaxed font-medium">
+              Explore debate motions, craft arguments using structured frameworks, practice in the Arena with an AI Speech Coach, and build daily practice streaks!
+            </p>
+            <div className="pt-2">
+              <button
+                onClick={() => setShowAuthModal(true)}
+                className="px-8 py-4 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-extrabold text-sm rounded-2xl shadow-xl shadow-blue-500/25 hover:scale-105 transition duration-200 cursor-pointer"
+              >
+                Join Debating Hero Today 🚀
+              </button>
+            </div>
+          </div>
+
+          {/* Feature Showcase Grid */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-6">
+            
+            <div className="bg-white rounded-3xl p-6 border border-slate-200/80 shadow-xs space-y-3">
+              <div className="w-12 h-12 rounded-2xl bg-blue-100 text-blue-600 flex items-center justify-center text-2xl font-bold">
+                🧭
+              </div>
+              <h3 className="text-lg font-bold text-slate-800">100+ Debate Topics</h3>
+              <p className="text-xs text-slate-500 leading-relaxed">
+                Browse through Value & Ethics, Policy, Fact & Tech, and Fun motions—or create your own custom topics!
+              </p>
+            </div>
+
+            <div className="bg-white rounded-3xl p-6 border border-slate-200/80 shadow-xs space-y-3">
+              <div className="w-12 h-12 rounded-2xl bg-purple-100 text-purple-600 flex items-center justify-center text-2xl font-bold">
+                ✨
+              </div>
+              <h3 className="text-lg font-bold text-slate-800">Gemini AI Coach</h3>
+              <p className="text-xs text-slate-500 leading-relaxed">
+                Get instant, age-appropriate AI coaching feedback on every section of your speech before speaking aloud.
+              </p>
+            </div>
+
+            <div className="bg-white rounded-3xl p-6 border border-slate-200/80 shadow-xs space-y-3">
+              <div className="w-12 h-12 rounded-2xl bg-orange-100 text-orange-600 flex items-center justify-center text-2xl font-bold">
+                🔥
+              </div>
+              <h3 className="text-lg font-bold text-slate-800">Leveling & Daily Streaks</h3>
+              <p className="text-xs text-slate-500 leading-relaxed">
+                Earn XP for practicing, unlock new debater ranks, and maintain your daily streak like Duolingo!
+              </p>
+            </div>
+
+          </div>
+
+          {/* CTA Banner */}
+          <div className="bg-gradient-to-r from-blue-900 to-indigo-950 rounded-3xl p-8 text-white shadow-xl flex flex-col md:flex-row items-center justify-between gap-6">
+            <div className="space-y-1 text-center md:text-left">
+              <h3 className="text-xl font-bold">Ready to make your voice heard?</h3>
+              <p className="text-xs text-blue-200">Sign in or create your Hero profile in seconds.</p>
+            </div>
+            <button
+              onClick={() => setShowAuthModal(true)}
+              className="px-6 py-3 bg-amber-400 hover:bg-amber-300 text-slate-900 font-black text-xs rounded-xl shadow-md transition cursor-pointer shrink-0"
+            >
+              Sign In / Register Now ⚔️
+            </button>
+          </div>
+
+        </main>
+
+        <footer className="text-center py-6 text-xs text-slate-400 border-t border-slate-200">
+          © {new Date().getFullYear()} Debating Hero. Built for young debaters everywhere.
+        </footer>
+      </div>
+    );
+  }
+
+  // ==========================================
+  // AUTHENTICATED DASHBOARD (FOR LOGGED IN USERS)
+  // ==========================================
   return (
     <div className="min-h-screen bg-[#F0F3F8] text-slate-800 flex font-sans w-full relative">
       
+      {/* XP / LEVEL UP TOAST NOTIFICATION */}
+      {xpToast && (
+        <div className="fixed top-5 right-5 bg-gradient-to-r from-amber-500 to-amber-600 text-white font-extrabold text-xs px-5 py-3 rounded-2xl shadow-2xl z-50 animate-bounce flex items-center space-x-2 border border-amber-300">
+          <span>🌟</span>
+          <span>{xpToast}</span>
+        </div>
+      )}
+
       {/* GEMINI AI COACH RESPONSE MODAL */}
       {aiModalContent && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fadeIn">
@@ -462,13 +949,24 @@ Task:
             <button
               onClick={() => setActiveTab('explorer')}
               className={`w-full flex items-center space-x-3 px-4 py-3 rounded-xl font-semibold text-xs transition cursor-pointer ${
-                activeTab === 'explorer' || activeTab === 'arena'
+                activeTab === 'explorer'
                   ? 'bg-blue-600 text-white shadow-md shadow-blue-500/20'
                   : 'text-slate-600 hover:bg-slate-200/60'
               }`}
             >
               <span className="text-base">🧭</span>
               <span>Topic Explorer</span>
+            </button>
+            <button
+              onClick={() => setActiveTab('my-topics')}
+              className={`w-full flex items-center space-x-3 px-4 py-3 rounded-xl font-semibold text-xs transition cursor-pointer ${
+                activeTab === 'my-topics'
+                  ? 'bg-blue-600 text-white shadow-md shadow-blue-500/20'
+                  : 'text-slate-600 hover:bg-slate-200/60'
+              }`}
+            >
+              <span className="text-base">✍️</span>
+              <span>My Topics</span>
             </button>
             <button
               onClick={() => setActiveTab('hub')}
@@ -513,47 +1011,76 @@ Task:
                 )}
                 <div className="overflow-hidden">
                   <div className="text-xs font-bold text-slate-800 truncate">{name}</div>
-                  <div className="text-[10px] text-slate-400 truncate">{profile?.rank_title || 'Novice Debater'}</div>
+                  <div className="text-[10px] text-slate-400 truncate">{getRankTitle(currentLevel)}</div>
                 </div>
               </div>
             );
-          })() : (
-            <button
-              onClick={() => setActiveTab('profile')}
-              className="w-full py-2.5 bg-blue-600 text-white font-bold text-xs rounded-xl hover:bg-blue-700 transition cursor-pointer shadow-md shadow-blue-500/20"
-            >
-              Sign In / Sign Up
-            </button>
-          )}
+          })() : null}
         </div>
       </aside>
 
       {/* Main Full-Width Area */}
       <div className="flex-1 flex flex-col h-screen overflow-y-auto w-full">
-        {/* Top Header */}
-        <header className="bg-white border-b border-slate-200/80 px-8 py-3 flex justify-between items-center shrink-0 w-full shadow-2xs">
-          <div className="flex items-center space-x-4">
-            <span className="text-xs font-bold text-amber-500 uppercase tracking-wide">
-              Hero Level {profile?.level || 1}
-            </span>
-            <div className="w-56 bg-slate-100 h-2.5 rounded-full overflow-hidden">
-              <div
-                className="bg-gradient-to-r from-amber-400 to-amber-500 h-full rounded-full transition-all duration-300"
-                style={{ width: `${Math.min(((profile?.xp || 0) % 1000) / 10, 100)}%` }}
-              ></div>
+        {/* TOP HEADER WITH XP BAR AND DUOLINGO-STYLE STREAK COUNTER */}
+        <header className="bg-white border-b border-slate-200/80 px-8 py-3 flex justify-between items-center shrink-0 w-full shadow-2xs relative">
+          <div className="flex items-center space-x-5">
+            
+            {/* DUOLINGO DAILY STREAK FLAME WIDGET */}
+            <div className="relative">
+              <button
+                onClick={() => setShowStreakModal((prev) => !prev)}
+                className={`flex items-center space-x-1.5 px-3 py-1 rounded-xl font-extrabold text-xs border transition cursor-pointer shadow-2xs ${
+                  streakCount > 0
+                    ? 'bg-orange-50 border-orange-200 text-orange-600 hover:bg-orange-100'
+                    : 'bg-slate-100 border-slate-200 text-slate-400 hover:bg-slate-200'
+                }`}
+              >
+                <span className="text-base">🔥</span>
+                <span>{streakCount} {streakCount === 1 ? 'Day' : 'Days'}</span>
+              </button>
+
+              {/* STREAK POPOVER CARD */}
+              {showStreakModal && (
+                <div className="absolute top-10 left-0 w-64 bg-white rounded-2xl p-4 shadow-xl border border-slate-200 z-50 animate-fadeIn space-y-2">
+                  <div className="flex justify-between items-center">
+                    <span className="text-xs font-black text-orange-600 flex items-center gap-1">
+                      🔥 Daily Practice Streak
+                    </span>
+                    <button
+                      onClick={() => setShowStreakModal(false)}
+                      className="text-slate-400 hover:text-slate-600 text-xs font-bold cursor-pointer"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                  <p className="text-xs text-slate-600 leading-relaxed">
+                    {streakCount > 0
+                      ? `Great job! You're on a ${streakCount}-day streak. Practice or save progress every day to keep your flame burning!`
+                      : 'Complete any activity today (mark a topic or save a debate) to ignite your practice streak! 🔥'}
+                  </p>
+                </div>
+              )}
             </div>
-            <span className="text-xs text-slate-400 font-mono">{profile?.xp || 0} / 3,000 XP</span>
+
+            {/* LEVEL & XP PROGRESS BAR */}
+            <div className="flex items-center space-x-3">
+              <span className="text-xs font-extrabold text-amber-500 uppercase tracking-wide">
+                HERO LEVEL {currentLevel}
+              </span>
+              <div className="w-48 bg-slate-100 h-3 rounded-full overflow-hidden border border-slate-200/60">
+                <div
+                  className="bg-gradient-to-r from-amber-400 to-amber-500 h-full rounded-full transition-all duration-500"
+                  style={{ width: `${(xpInCurrentLevel / XP_PER_LEVEL) * 100}%` }}
+                ></div>
+              </div>
+              <span className="text-xs text-slate-500 font-mono font-bold">
+                {xpInCurrentLevel} / {XP_PER_LEVEL} XP
+              </span>
+            </div>
           </div>
 
           <div className="flex items-center space-x-3">
-            {!session ? (
-              <button
-                onClick={() => setActiveTab('profile')}
-                className="px-4 py-1.5 bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white rounded-xl text-xs font-bold transition cursor-pointer"
-              >
-                Sign In
-              </button>
-            ) : (() => {
+            {session && (() => {
               const { initial } = getHeroInfo(profile, session);
               return (
                 <div 
@@ -658,7 +1185,6 @@ Task:
                       }`}
                     >
                       <div>
-                        {/* Badge & Stars */}
                         <div className="flex justify-between items-center mb-3">
                           <span
                             className={`text-[10px] font-extrabold px-2.5 py-1 rounded-md uppercase tracking-wider ${
@@ -682,7 +1208,6 @@ Task:
                         </p>
                       </div>
 
-                      {/* Card Bottom Bar */}
                       <div className="mt-6 flex justify-end items-center pt-4 border-t border-slate-100">
                         <button
                           onClick={() => setSelectedTopicModal(topic)}
@@ -714,7 +1239,7 @@ Task:
                       <button
                         onClick={() => setCurrentPage((prev) => Math.max(prev - 1, 1))}
                         disabled={currentPage === 1}
-                        className="px-3.5 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition shadow-2xs"
+                        className="px-3.5 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition shadow-2xs cursor-pointer"
                       >
                         ← Prev
                       </button>
@@ -736,7 +1261,7 @@ Task:
                       <button
                         onClick={() => setCurrentPage((prev) => Math.min(prev + 1, totalPages))}
                         disabled={currentPage === totalPages}
-                        className="px-3.5 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition shadow-2xs"
+                        className="px-3.5 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition shadow-2xs cursor-pointer"
                       >
                         Next →
                       </button>
@@ -748,19 +1273,162 @@ Task:
           </main>
         )}
 
-        {/* PAGE 1.5: PRACTICE ARENA WITH DIRECT GEMINI AI COACH */}
+        {/* PAGE 1.2: MY TOPICS TAB */}
+        {activeTab === 'my-topics' && (
+          <main className="p-8 w-full flex-1 space-y-6 pb-12">
+            <div className="flex justify-between items-end">
+              <div>
+                <h2 className="text-3xl font-extrabold text-blue-950 tracking-tight">My Custom Topics</h2>
+                <p className="text-xs text-slate-500 mt-1 font-medium">
+                  Create, edit, or delete your own debate motions and practice them in the Arena!
+                </p>
+              </div>
+              <span className="text-xs font-bold bg-purple-100 text-purple-700 px-3 py-1 rounded-full">
+                {myTopics.length} Custom Topics
+              </span>
+            </div>
+
+            {/* Creation Form Box */}
+            <div className="bg-white rounded-3xl p-6 border border-slate-200/80 shadow-xs space-y-4">
+              <h3 className="text-sm font-extrabold text-slate-800">✍️ Create a New Topic (+10 XP)</h3>
+              <form onSubmit={handleCreateCustomTopic} className="space-y-3">
+                <input
+                  type="text"
+                  placeholder="Enter motion... e.g. 'That primary school students should not be given homework'"
+                  value={newTopicTitle}
+                  onChange={(e) => setNewTopicTitle(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs text-slate-800 focus:outline-none focus:border-blue-500"
+                  required
+                />
+                <textarea
+                  rows={2}
+                  placeholder="Optional context or description..."
+                  value={newTopicDesc}
+                  onChange={(e) => setNewTopicDesc(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs text-slate-800 focus:outline-none focus:border-blue-500"
+                />
+                <div className="flex justify-end">
+                  <button
+                    type="submit"
+                    disabled={isCreatingTopic || !newTopicTitle.trim()}
+                    className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl shadow-md transition disabled:opacity-50 cursor-pointer"
+                  >
+                    {isCreatingTopic ? 'Saving Topic...' : 'Add Custom Topic +'}
+                  </button>
+                </div>
+              </form>
+            </div>
+
+            {/* Custom Topic Cards Grid */}
+            {myTopics.length === 0 ? (
+              <div className="py-16 text-center bg-white rounded-3xl border border-slate-200/80 p-8 space-y-2">
+                <p className="text-sm font-bold text-slate-700">No custom topics created yet.</p>
+                <p className="text-xs text-slate-400">Type a motion above to add your first debate topic!</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 w-full">
+                {myTopics.map((topic) => (
+                  <div
+                    key={topic.id}
+                    className="bg-white border-slate-200/80 text-slate-800 rounded-2xl p-6 flex flex-col justify-between border transition shadow-2xs relative overflow-hidden"
+                  >
+                    {editingTopicId === topic.id ? (
+                      /* INLINE EDIT FORM */
+                      <div className="space-y-3">
+                        <div className="flex justify-between items-center mb-1">
+                          <span className="text-[10px] font-extrabold px-2.5 py-0.5 rounded-md uppercase bg-amber-100 text-amber-800">
+                            Editing
+                          </span>
+                        </div>
+                        <input
+                          type="text"
+                          value={editTopicTitle}
+                          onChange={(e) => setEditTopicTitle(e.target.value)}
+                          className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2 text-xs font-bold text-slate-800 focus:outline-none focus:border-blue-500"
+                        />
+                        <textarea
+                          rows={2}
+                          value={editTopicDesc}
+                          onChange={(e) => setEditTopicDesc(e.target.value)}
+                          className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2 text-xs text-slate-600 focus:outline-none focus:border-blue-500"
+                        />
+                        <div className="flex justify-end gap-2 pt-2">
+                          <button
+                            onClick={() => setEditingTopicId(null)}
+                            className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold text-xs rounded-lg transition cursor-pointer"
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            onClick={() => handleSaveEdit(topic.id)}
+                            className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-lg transition cursor-pointer"
+                          >
+                            Save
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      /* CARD DISPLAY VIEW */
+                      <>
+                        <div>
+                          <div className="flex justify-between items-center mb-3">
+                            <span className="text-[10px] font-extrabold px-2.5 py-1 rounded-md uppercase tracking-wider bg-purple-100 text-purple-700">
+                              Custom
+                            </span>
+                            
+                            <div className="flex items-center space-x-1">
+                              <button
+                                onClick={() => handleStartEdit(topic)}
+                                title="Edit Topic"
+                                className="p-1 text-slate-400 hover:text-blue-600 transition cursor-pointer text-xs"
+                              >
+                                ✏️
+                              </button>
+                              <button
+                                onClick={() => handleDeleteTopic(topic.id)}
+                                title="Delete Topic"
+                                className="p-1 text-slate-400 hover:text-rose-600 transition cursor-pointer text-xs"
+                              >
+                                🗑️
+                              </button>
+                            </div>
+                          </div>
+
+                          <h3 className="text-lg font-bold leading-snug mb-2">{topic.title}</h3>
+                          <p className="text-xs text-slate-500 leading-relaxed">
+                            {topic.description}
+                          </p>
+                        </div>
+
+                        <div className="mt-6 flex justify-end items-center pt-4 border-t border-slate-100">
+                          <button
+                            onClick={() => setSelectedTopicModal(topic)}
+                            className="px-4 py-2 rounded-xl text-xs font-bold transition cursor-pointer bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white"
+                          >
+                            Start Topic
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </main>
+        )}
+
+        {/* PAGE 1.5: PRACTICE ARENA */}
         {activeTab === 'arena' && activeTopic && (
           <main className="p-8 w-full flex-1 space-y-6 pb-12">
             
-            {/* Top Quest Banner */}
             <div className="bg-gradient-to-r from-blue-600 to-indigo-600 rounded-2xl p-6 text-white shadow-lg flex flex-col md:flex-row justify-between items-start md:items-center gap-4 relative overflow-hidden">
               <div>
                 <div className="flex items-center space-x-2">
                   <button
-                    onClick={() => setActiveTab('explorer')}
+                    onClick={() => setActiveTab(activeTopic.category === 'Custom' ? 'my-topics' : 'explorer')}
                     className="text-xs bg-white/10 hover:bg-white/20 text-white font-bold px-2.5 py-1 rounded-lg transition cursor-pointer"
                   >
-                    ← Back to Explorer
+                    ← Back to {activeTopic.category === 'Custom' ? 'My Topics' : 'Explorer'}
                   </button>
                   <span className="text-[10px] uppercase tracking-widest font-bold text-blue-200">
                     {chosenStance === 'Affirmative' ? '👍 Team Affirmative' : '👎 Team Negative'}
@@ -769,7 +1437,7 @@ Task:
                 <h2 className="text-2xl font-black mt-2">{activeTopic.title}</h2>
               </div>
 
-              {/* Save & Action Bar */}
+              {/* SAVE PROGRESS BUTTON WITH +10 XP */}
               <div className="flex items-center space-x-3 shrink-0">
                 <button
                   onClick={handleSaveSpeech}
@@ -787,22 +1455,17 @@ Task:
                     {isSaving
                       ? 'Saving...'
                       : saveStatus === 'saved'
-                      ? '✓ Saved!'
+                      ? '✓ Saved! (+10 XP)'
                       : saveStatus === 'error'
                       ? 'Error Saving'
-                      : 'Save Progress'}
+                      : 'Save Progress (+10 XP)'}
                   </span>
                 </button>
               </div>
             </div>
 
-            {/* Arena Grid */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 w-full">
-              
-              {/* Left Side: Speech Cards */}
               <div className="lg:col-span-2 space-y-4">
-                
-                {/* 1. AFFIRMATIVE TEMPLATE */}
                 {chosenStance === 'Affirmative' ? (
                   <>
                     {[
@@ -826,7 +1489,6 @@ Task:
                           </div>
 
                           <div className="flex items-center space-x-2">
-                            {/* GEMINI AI COACH BUTTON */}
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
@@ -856,7 +1518,6 @@ Task:
                     ))}
                   </>
                 ) : (
-                  /* 2. NEGATIVE TEMPLATE */
                   <>
                     {[
                       { key: 'opening', title: 'Opening Statement', time: '2 Mins', color: 'bg-blue-600', placeholder: "Type your heroic opening argument here... e.g., 'While the affirmative claims that..., we strongly oppose because...'" },
@@ -907,28 +1568,21 @@ Task:
                     ))}
                   </>
                 )}
-
               </div>
 
-              {/* Right Side: Hero Tools Panel */}
               <div className="space-y-6">
-                
-                {/* Save Status Box */}
                 <div className="bg-white rounded-2xl p-5 border border-slate-200/80 shadow-2xs space-y-3">
                   <div className="flex justify-between items-center">
                     <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider">Storage Sync</h4>
                     <span className="text-[10px] bg-blue-100 text-blue-700 px-2 py-0.5 rounded-md font-bold">
-                      {session ? 'Supabase Connected' : 'Guest Mode'}
+                      Supabase Connected
                     </span>
                   </div>
                   <p className="text-xs text-slate-500 leading-relaxed">
-                    {session
-                      ? 'Click "Save Progress" above to sync your arguments to your Hero Profile.'
-                      : 'Sign in to automatically save your speeches to the cloud.'}
+                    Click "Save Progress" above to sync your arguments to your Hero Profile and earn +10 XP.
                   </p>
                 </div>
 
-                {/* Hero Tools Signposting Box */}
                 <div className="bg-[#107C55] rounded-2xl p-6 text-white shadow-lg space-y-5">
                   <div className="flex items-center space-x-2">
                     <span className="text-xl">🛠️</span>
@@ -984,11 +1638,8 @@ Task:
                     </div>
                   </div>
                 </div>
-
               </div>
-
             </div>
-
           </main>
         )}
 
@@ -998,7 +1649,7 @@ Task:
             <div>
               <h2 className="text-3xl font-extrabold text-blue-950 tracking-tight">Learning Hub</h2>
               <p className="text-xs text-slate-500 mt-1 font-medium">
-                Master the core skills of debating: speech structure, devastating rebuttals, and killer signposting.
+                Master the core skills of debating: speech structure, devastating rebuttals, signposting, and essential world knowledge.
               </p>
             </div>
 
@@ -1008,16 +1659,17 @@ Task:
               </div>
             )}
 
-            <div className="flex border-b border-slate-200 gap-6">
+            <div className="flex border-b border-slate-200 gap-6 overflow-x-auto">
               {[
                 { id: 'areo', label: '1. The AREO Framework', icon: '🏗️' },
                 { id: 'rebuttal', label: '2. Rebuttal Tactics', icon: '⚡' },
                 { id: 'signposts', label: '3. Signposting Cheat Sheet', icon: '🛠️' },
+                { id: 'humanities', label: '4. Humanities Knowledge', icon: '🏛️' },
               ].map((tab) => (
                 <button
                   key={tab.id}
                   onClick={() => setActiveLesson(tab.id)}
-                  className={`pb-3 text-xs font-extrabold flex items-center space-x-2 border-b-2 transition cursor-pointer ${
+                  className={`pb-3 text-xs font-extrabold flex items-center space-x-2 border-b-2 transition cursor-pointer shrink-0 ${
                     activeLesson === tab.id
                       ? 'border-blue-600 text-blue-600'
                       : 'border-transparent text-slate-400 hover:text-slate-600'
@@ -1203,15 +1855,199 @@ Task:
                 </div>
               </div>
             )}
+
+            {/* LESSON 4: DYNAMIC HUMANITIES KNOWLEDGE (+10 XP REWARD) */}
+            {activeLesson === 'humanities' && (
+              <div className="space-y-6">
+                <div className="bg-gradient-to-r from-purple-700 to-indigo-800 rounded-3xl p-6 text-white shadow-md flex justify-between items-center">
+                  <div>
+                    <span className="text-[10px] uppercase tracking-widest font-bold text-purple-200">World Knowledge Base</span>
+                    <h3 className="text-xl font-black mt-1">Humanities & Social Science Fundamentals</h3>
+                    <p className="text-xs text-purple-100 mt-1 leading-relaxed max-w-2xl">
+                      Ground your arguments in real-world knowledge. Mark topics as "I Know" to earn <strong>+10 XP</strong> each!
+                    </p>
+                  </div>
+                  {knownItems.size > 0 && (
+                    <div className="bg-emerald-500/30 border border-emerald-400 text-emerald-100 px-4 py-2 rounded-2xl text-xs font-extrabold flex items-center gap-1.5 shrink-0">
+                      <span>✓</span>
+                      <span>{knownItems.size} Mastered (+{knownItems.size * 10} XP)</span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Filter Pills */}
+                <div className="flex flex-wrap gap-2">
+                  {['All', 'Political', 'History', 'Economics', 'Health'].map((filterType) => (
+                    <button
+                      key={filterType}
+                      onClick={() => handleHumanitiesFilterChange(filterType)}
+                      className={`px-4 py-2 rounded-full text-xs font-semibold transition cursor-pointer ${
+                        selectedHumanitiesFilter === filterType
+                          ? 'bg-purple-700 text-white shadow-md shadow-purple-500/20'
+                          : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200/80'
+                      }`}
+                    >
+                      {filterType === 'Political' ? '🏛️ ' : filterType === 'History' ? '📜 ' : filterType === 'Economics' ? '📈 ' : filterType === 'Health' ? '🩺 ' : ''}
+                      {filterType}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Data Grid */}
+                {loadingHumanities ? (
+                  <div className="py-20 text-center space-y-3">
+                    <div className="w-10 h-10 border-4 border-purple-600 border-t-transparent rounded-full animate-spin mx-auto"></div>
+                    <p className="text-xs text-slate-500 font-medium">Loading knowledge cards from database...</p>
+                  </div>
+                ) : filteredHumanities.length === 0 ? (
+                  <div className="py-16 text-center bg-white rounded-3xl border border-slate-200/80 p-8">
+                    <p className="text-sm font-bold text-slate-700">No knowledge entries found in the database.</p>
+                  </div>
+                ) : (
+                  <>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      {paginatedHumanities.map((item) => {
+                        const isKnown = knownItems.has(item.id);
+                        const typeConfig = {
+                          Political: {
+                            badge: 'bg-indigo-100 text-indigo-700 border-indigo-500',
+                            icon: '🏛️',
+                            bgSignpost: 'bg-indigo-900',
+                          },
+                          History: {
+                            badge: 'bg-amber-100 text-amber-800 border-amber-500',
+                            icon: '📜',
+                            bgSignpost: 'bg-amber-950',
+                          },
+                          Economics: {
+                            badge: 'bg-emerald-100 text-emerald-800 border-emerald-500',
+                            icon: '📈',
+                            bgSignpost: 'bg-emerald-900',
+                          },
+                          Health: {
+                            badge: 'bg-rose-100 text-rose-800 border-rose-500',
+                            icon: '🩺',
+                            bgSignpost: 'bg-rose-950',
+                          },
+                        }[item.type] || {
+                          badge: 'bg-slate-100 text-slate-700 border-slate-400',
+                          icon: '🌐',
+                          bgSignpost: 'bg-slate-900',
+                        };
+
+                        return (
+                          <div
+                            key={item.id}
+                            className={`bg-white rounded-2xl p-6 border transition shadow-2xs space-y-4 border-l-4 ${typeConfig.badge.split(' ')[2]} ${
+                              isKnown ? 'ring-2 ring-emerald-500/30 bg-emerald-50/10' : ''
+                            }`}
+                          >
+                            <div className="flex justify-between items-center">
+                              <div className="flex items-center gap-2">
+                                <span className="text-xl">{typeConfig.icon}</span>
+                                <span className={`text-[10px] font-extrabold px-2.5 py-0.5 rounded-md uppercase tracking-wider ${typeConfig.badge.split(' ').slice(0, 2).join(' ')}`}>
+                                  {item.type}
+                                </span>
+                              </div>
+
+                              {/* PERSISTENT I KNOW BUTTON WITH +10 XP */}
+                              <button
+                                onClick={() => toggleKnowItem(item.id)}
+                                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer border ${
+                                  isKnown
+                                    ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs'
+                                    : 'bg-slate-100 hover:bg-slate-200 text-slate-600 border-slate-200'
+                                }`}
+                              >
+                                <span>{isKnown ? '✓' : '💡'}</span>
+                                <span>{isKnown ? 'Mastered (+10 XP)' : 'I Know (+10 XP)'}</span>
+                              </button>
+                            </div>
+
+                            <div>
+                              <h4 className="text-base font-bold text-slate-800">{item.title}</h4>
+                              <p className="text-xs text-slate-500 mt-1 leading-relaxed">{item.content}</p>
+                            </div>
+
+                            {item.case_study && (
+                              <div className="bg-slate-50 border border-slate-100 rounded-xl p-3 text-[11px] text-slate-700 space-y-1">
+                                <span className="font-bold block text-slate-900">💡 Real-World Case Study:</span>
+                                <p className="text-slate-600">{item.case_study}</p>
+                              </div>
+                            )}
+
+                            {item.signpost_phrase && (
+                              <div
+                                onClick={() => handleCopyPhrase(item.signpost_phrase)}
+                                className={`p-3 ${typeConfig.bgSignpost} text-white rounded-xl text-[11px] font-medium space-y-1 cursor-pointer hover:opacity-90 transition`}
+                              >
+                                <div className="flex justify-between items-center">
+                                  <span className="text-[10px] font-bold uppercase text-slate-300">Copyable Signpost Phrase:</span>
+                                  <span className="text-[9px] bg-white/20 px-2 py-0.5 rounded text-white font-bold">Copy</span>
+                                </div>
+                                <p className="italic">"{item.signpost_phrase}"</p>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {/* HUMANITIES PAGINATION CONTROLS */}
+                    {totalHumanitiesPages > 1 && (
+                      <div className="flex justify-between items-center pt-6 border-t border-slate-200/80">
+                        <span className="text-xs text-slate-500 font-medium">
+                          Showing <span className="font-bold text-slate-800">{humanitiesStartIndex + 1}</span> -{' '}
+                          <span className="font-bold text-slate-800">
+                            {Math.min(humanitiesStartIndex + HUMANITIES_PER_PAGE, filteredHumanities.length)}
+                          </span>{' '}
+                          of <span className="font-bold text-slate-800">{filteredHumanities.length}</span> knowledge topics
+                        </span>
+
+                        <div className="flex items-center space-x-1.5">
+                          <button
+                            onClick={() => setHumanitiesPage((prev) => Math.max(prev - 1, 1))}
+                            disabled={humanitiesPage === 1}
+                            className="px-3.5 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition shadow-2xs cursor-pointer"
+                          >
+                            ← Prev
+                          </button>
+
+                          {Array.from({ length: totalHumanitiesPages }, (_, i) => i + 1).map((page) => (
+                            <button
+                              key={page}
+                              onClick={() => setHumanitiesPage(page)}
+                              className={`w-9 h-9 rounded-xl text-xs font-bold transition cursor-pointer ${
+                                humanitiesPage === page
+                                  ? 'bg-purple-700 text-white shadow-md shadow-purple-500/20'
+                                  : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200/80'
+                              }`}
+                            >
+                              {page}
+                            </button>
+                          ))}
+
+                          <button
+                            onClick={() => setHumanitiesPage((prev) => Math.min(prev + 1, totalHumanitiesPages))}
+                            disabled={humanitiesPage === totalHumanitiesPages}
+                            className="px-3.5 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition shadow-2xs cursor-pointer"
+                          >
+                            Next →
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+            )}
           </main>
         )}
 
         {/* PAGE 3: HERO PROFILE & AUTH SCREEN */}
         {activeTab === 'profile' && (
           <main className="p-8 w-full flex-1 flex justify-center items-center">
-            {!session ? (
-              <AuthModal onAuthSuccess={() => setActiveTab('explorer')} />
-            ) : (() => {
+            {(() => {
               const { name, initial } = getHeroInfo(profile, session);
               return (
                 <div className="w-full max-w-xl bg-white rounded-3xl p-8 border border-slate-200/80 shadow-md space-y-6">
@@ -1230,8 +2066,8 @@ Task:
                       )}
                       <div>
                         <h2 className="text-xl font-extrabold text-blue-950">{name}</h2>
-                        <span className="text-xs bg-blue-100 text-blue-700 font-bold px-3 py-0.5 rounded-full inline-block mt-1">
-                          {profile?.rank_title || 'Novice Debater'}
+                        <span className="text-xs bg-amber-100 text-amber-800 font-bold px-3 py-0.5 rounded-full inline-block mt-1">
+                          {getRankTitle(currentLevel)}
                         </span>
                       </div>
                     </div>
@@ -1244,15 +2080,29 @@ Task:
                     </button>
                   </div>
 
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="bg-orange-50 border border-orange-100 rounded-2xl p-4 text-center">
+                      <span className="text-2xl block">🔥</span>
+                      <span className="text-lg font-black text-orange-600 block">{streakCount} Days</span>
+                      <span className="text-[10px] text-slate-400 uppercase font-bold tracking-wider">Current Streak</span>
+                    </div>
+
+                    <div className="bg-blue-50 border border-blue-100 rounded-2xl p-4 text-center">
+                      <span className="text-2xl block">🏆</span>
+                      <span className="text-lg font-black text-blue-600 block">{currentXp} XP</span>
+                      <span className="text-[10px] text-slate-400 uppercase font-bold tracking-wider">Total Experience</span>
+                    </div>
+                  </div>
+
                   <div className="bg-slate-50 border border-slate-100 rounded-2xl p-5 space-y-3">
                     <div className="flex justify-between text-xs font-bold text-slate-700">
-                      <span>Hero Level {profile?.level || 1}</span>
-                      <span className="font-mono text-slate-400">{profile?.xp || 0} / 1,000 XP</span>
+                      <span>Hero Level {currentLevel}</span>
+                      <span className="font-mono text-slate-500">{currentXp} Total XP ({xpInCurrentLevel} / {XP_PER_LEVEL} to Level {currentLevel + 1})</span>
                     </div>
                     <div className="w-full bg-slate-200 h-3 rounded-full overflow-hidden">
                       <div
                         className="bg-amber-400 h-full rounded-full transition-all duration-500"
-                        style={{ width: `${Math.min(((profile?.xp || 0) % 1000) / 10, 100)}%` }}
+                        style={{ width: `${(xpInCurrentLevel / XP_PER_LEVEL) * 100}%` }}
                       ></div>
                     </div>
                   </div>
