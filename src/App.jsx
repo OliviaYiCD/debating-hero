@@ -8,10 +8,12 @@ import {
   acceptPendingSharesForUser,
   acceptShareByToken,
   addPointComment,
+  clearPendingShareToken,
   clearShareTokenFromUrl,
   fetchIncomingShares,
   fetchPointComments,
-  getShareTokenFromUrl,
+  getPendingShareToken,
+  rememberPendingShareToken,
 } from './lib/sharing';
 
 const ITEMS_PER_PAGE = 12;
@@ -568,6 +570,8 @@ export default function App() {
   };
 
   useEffect(() => {
+    rememberPendingShareToken();
+
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
       if (session) {
@@ -602,29 +606,32 @@ export default function App() {
     return () => subscription.unsubscribe();
   }, []);
 
-  // If someone opens an invite link while logged out, prompt sign-in/sign-up
+  // If someone opens an invite link while logged out, remember it and prompt sign-in/sign-up
   useEffect(() => {
-    const token = getShareTokenFromUrl();
+    const token = getPendingShareToken();
     if (token && !session) {
+      rememberPendingShareToken(token);
       setShowAuthModal(true);
     }
   }, [session]);
 
   const bootstrapSharesForUser = async (user) => {
     if (!user) return;
-    const email = user.email || '';
 
     try {
       await acceptPendingSharesForUser();
 
-      const token = getShareTokenFromUrl();
+      const token = getPendingShareToken();
+      let accepted = null;
       if (token) {
         try {
-          const accepted = await acceptShareByToken(token, user.id, email);
+          accepted = await acceptShareByToken(token, user.id);
           clearShareTokenFromUrl();
+          clearPendingShareToken();
           if (accepted) {
             alert(`Invite accepted! Opening “${accepted.topic_title}”. Find it anytime under Teamwork.`);
             setSelectedFilter('🤝 Teamwork');
+            setActiveTab('explorer');
             await openSharedWorkspace(accepted);
           }
         } catch (err) {
@@ -634,7 +641,11 @@ export default function App() {
       }
 
       const shares = await fetchIncomingShares(user.id);
-      setIncomingShares(shares);
+      if (accepted && !shares.some((share) => share.id === accepted.id)) {
+        setIncomingShares([accepted, ...shares]);
+      } else {
+        setIncomingShares(shares);
+      }
     } catch (err) {
       console.error('Error bootstrapping shares:', err.message);
     }
@@ -1364,17 +1375,17 @@ Return your response strictly in valid JSON format with no markdown formatting a
           
           <div className="text-center space-y-5 max-w-3xl mx-auto">
             <span className="text-xs font-black uppercase tracking-widest px-3.5 py-1.5 rounded-full bg-blue-100 text-blue-700">
-              {getShareTokenFromUrl()
+              {getPendingShareToken()
                 ? '🔗 You’ve been invited to a shared debate topic'
                 : '⚔️ The Ultimate Debate Arena for Young Orators'}
             </span>
             <h2 className="text-4xl md:text-5xl font-black text-blue-950 leading-tight tracking-tight">
-              {getShareTokenFromUrl()
+              {getPendingShareToken()
                 ? 'Sign up to open your shared topic'
                 : 'Build Confidence, Master Rhetoric & Level Up Your Speech Skills!'}
             </h2>
             <p className="text-sm md:text-base text-slate-600 leading-relaxed font-medium">
-              {getShareTokenFromUrl()
+              {getPendingShareToken()
                 ? 'Create an account (or sign in), then we’ll open the shared workspace for teamwork.'
                 : 'Explore debate motions, craft arguments using structured frameworks, practice in the Arena with an AI Speech Coach, and build daily practice streaks!'}
             </p>
@@ -1383,7 +1394,7 @@ Return your response strictly in valid JSON format with no markdown formatting a
                 onClick={() => setShowAuthModal(true)}
                 className="px-8 py-4 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-extrabold text-sm rounded-2xl shadow-xl shadow-blue-500/25 hover:scale-105 transition duration-200 cursor-pointer"
               >
-                {getShareTokenFromUrl() ? 'Sign Up / Sign In to Join 🔗' : 'Join Debating Hero Today 🚀'}
+                {getPendingShareToken() ? 'Sign Up / Sign In to Join 🔗' : 'Join Debating Hero Today 🚀'}
               </button>
             </div>
           </div>

@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { supabase } from '../supabaseClient';
+import { buildAuthRedirectUrl, getPendingShareToken, rememberPendingShareToken } from '../lib/sharing';
 
 export default function AuthModal({ onAuthSuccess }) {
   const [isSignUp, setIsSignUp] = useState(false);
@@ -8,13 +9,15 @@ export default function AuthModal({ onAuthSuccess }) {
   const [username, setUsername] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
   const [loading, setLoading] = useState(false);
+  const hasPendingInvite = Boolean(getPendingShareToken());
 
   const handleGoogleSignIn = async () => {
     setErrorMsg('');
+    rememberPendingShareToken();
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
-        redirectTo: window.location.origin,
+        redirectTo: buildAuthRedirectUrl(),
       },
     });
 
@@ -25,6 +28,7 @@ export default function AuthModal({ onAuthSuccess }) {
     e.preventDefault();
     setErrorMsg('');
     setLoading(true);
+    rememberPendingShareToken();
 
     try {
       if (isSignUp) {
@@ -33,11 +37,18 @@ export default function AuthModal({ onAuthSuccess }) {
           password,
           options: {
             data: { username: username || email.split('@')[0] },
+            emailRedirectTo: buildAuthRedirectUrl(),
           },
         });
         if (error) throw error;
-        if (data?.user) {
-          alert('Sign up successful! Please check your email for confirmation.');
+        if (data?.session?.user) {
+          if (onAuthSuccess) onAuthSuccess(data.session.user);
+        } else if (data?.user) {
+          alert(
+            hasPendingInvite
+              ? 'Sign up successful! Confirm your email, then sign in on this device — we’ll open the shared topic automatically.'
+              : 'Sign up successful! Please check your email for confirmation.'
+          );
           if (onAuthSuccess) onAuthSuccess(data.user);
         }
       } else {
@@ -67,9 +78,11 @@ export default function AuthModal({ onAuthSuccess }) {
           {isSignUp ? 'Become a Debating Hero' : 'Welcome Back, Hero!'}
         </h2>
         <p className="text-xs text-slate-500 mt-1">
-          {isSignUp 
-            ? 'Create an account to track your level, XP, and badges.' 
-            : 'Sign in to jump straight back into the arena.'}
+          {hasPendingInvite
+            ? 'Create an account or sign in to join the shared debate topic.'
+            : isSignUp
+              ? 'Create an account to track your level, XP, and badges.'
+              : 'Sign in to jump straight back into the arena.'}
         </p>
       </div>
 

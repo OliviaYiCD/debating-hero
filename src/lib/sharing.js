@@ -1,5 +1,7 @@
 import { supabase } from '../supabaseClient';
 
+const PENDING_SHARE_KEY = 'debating_hero_pending_share';
+
 export const SHARE_PERMISSIONS = {
   view: {
     id: 'view',
@@ -24,12 +26,51 @@ export function getShareTokenFromUrl() {
   return params.get('share');
 }
 
+export function rememberPendingShareToken(token = getShareTokenFromUrl()) {
+  if (typeof window === 'undefined' || !token) return null;
+  try {
+    window.localStorage.setItem(PENDING_SHARE_KEY, token);
+  } catch {
+    // ignore storage failures (private mode, etc.)
+  }
+  return token;
+}
+
+export function getPendingShareToken() {
+  if (typeof window === 'undefined') return null;
+  const fromUrl = getShareTokenFromUrl();
+  if (fromUrl) {
+    rememberPendingShareToken(fromUrl);
+    return fromUrl;
+  }
+  try {
+    return window.localStorage.getItem(PENDING_SHARE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function clearPendingShareToken() {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.removeItem(PENDING_SHARE_KEY);
+  } catch {
+    // ignore
+  }
+}
+
 export function clearShareTokenFromUrl() {
   if (typeof window === 'undefined') return;
   const url = new URL(window.location.href);
   if (!url.searchParams.has('share')) return;
   url.searchParams.delete('share');
   window.history.replaceState({}, '', url.pathname + url.search + url.hash);
+}
+
+export function buildAuthRedirectUrl() {
+  const base = typeof window !== 'undefined' ? window.location.origin : 'https://debating-hero.vercel.app';
+  const token = getPendingShareToken();
+  return token ? `${base}/?share=${encodeURIComponent(token)}` : base;
 }
 
 export async function createTopicShare({ topic, ownerId, stance, permission }) {
@@ -73,47 +114,73 @@ export function buildShareMailto({ topicTitle, ownerName, shareLink, permission,
 export async function fetchIncomingShares(userId) {
   if (!userId) return [];
 
-  const { data, error } = await supabase
+  const { data: memberRows, error: memberError } = await supabase
     .from('topic_share_members')
-    .select('joined_at, share:topic_shares(*)')
+    .select('share_id, joined_at')
     .eq('user_id', userId)
     .order('joined_at', { ascending: false });
 
-  if (error) throw error;
+  if (memberError) throw memberError;
 
-  return (data || [])
-    .map((row) => row.share)
+  const ids = (memberRows || []).map((row) => row.share_id).filter(Boolean);
+  if (!ids.length) return [];
+
+  const { data: shares, error: sharesError } = await supabase
+    .from('topic_shares')
+    .select('*')
+    .in('id', ids);
+
+  if (sharesError) throw sharesError;
+
+  const byId = new Map((shares || []).map((share) => [share.id, share]));
+  return ids
+    .map((id) => byId.get(id))
     .filter(Boolean)
     .filter((share) => share.owner_id !== userId);
 }
 
-export async function acceptShareByToken(token, userId, email) {
+export async function acceptShareByToken(token, userId) {
   if (!token || !userId) return null;
 
-  const { data: share, error } = await supabase
-    .from('topic_shares')
-    .select('*')
-    .eq('invite_token', token)
-    .eq('status', 'open')
-    .maybeSingle();
+  const { data: share, error } = await supabase.rpc('join_topic_share_by_token', {
+    p_token: token,
+  });
 
-  if (error) throw error;
+  if (error) {
+    // Fallback for DBs that have not run the join RPC migration yet.
+    const { data: legacyShare, error: legacyError } = await supabase
+      .from('topic_shares')
+      .select('*')
+      .eq('invite_token', token)
+      .eq('status', 'open')
+      .maybeSingle();
+
+    if (legacyError) throw legacyError;
+    if (!legacyShare) throw new Error(error.message || 'This invite link is invalid or has expired.');
+    if (legacyShare.owner_id === userId) {
+      throw new Error('This is your own share link.');
+    }
+
+    const { error: memberError } = await supabase.from('topic_share_members').insert({
+      share_id: legacyShare.id,
+      user_id: userId,
+    });
+
+    if (memberError && memberError.code !== '23505') {
+      throw new Error(error.message || memberError.message);
+    }
+
+    return {
+      ...legacyShare,
+      status: 'accepted',
+      shared_with_user_id: userId,
+    };
+  }
+
   if (!share) throw new Error('This invite link is invalid or has expired.');
-
   if (share.owner_id === userId) {
     throw new Error('This is your own share link.');
   }
-
-  const { error: memberError } = await supabase.from('topic_share_members').upsert(
-    {
-      share_id: share.id,
-      user_id: userId,
-      email: (email || '').trim().toLowerCase() || null,
-    },
-    { onConflict: 'share_id,user_id' }
-  );
-
-  if (memberError) throw memberError;
 
   return {
     ...share,
