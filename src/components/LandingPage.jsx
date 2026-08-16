@@ -23,7 +23,7 @@ export default function LandingPage({ showAuthModal, onOpenAuth, onCloseAuth }) 
       )}
 
       <header className="relative z-20 px-5 sm:px-8 py-5 flex justify-between items-center">
-        <div className="flex items-center gap-3">
+        <div className="hidden sm:flex items-center gap-3">
           <div className="w-10 h-10 rounded-2xl bg-blue-600 flex items-center justify-center text-white text-xl shadow-md shadow-blue-500/20">
             ⚔️
           </div>
@@ -31,9 +31,10 @@ export default function LandingPage({ showAuthModal, onOpenAuth, onCloseAuth }) 
             Debating Hero
           </span>
         </div>
+        <div className="sm:hidden" aria-hidden="true" />
         <button
           onClick={onOpenAuth}
-          className="px-4 sm:px-5 py-2.5 rounded-xl bg-white/80 hover:bg-white text-blue-600 border border-blue-100 font-bold text-xs transition cursor-pointer"
+          className="px-4 sm:px-5 py-2.5 rounded-xl bg-white/80 hover:bg-white text-blue-600 border border-blue-100 font-bold text-xs transition cursor-pointer ml-auto sm:ml-0"
         >
           Sign in
         </button>
