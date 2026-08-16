@@ -197,6 +197,7 @@ const getCompactPageItems = (currentPage, totalPages) => {
 export default function App() {
   const [activeTab, setActiveTab] = useState('explorer'); // 'explorer' | 'my-topics' | 'arena' | 'rebuttal-planner' | 'hub' | 'profile'
   const [selectedFilter, setSelectedFilter] = useState('All Topics');
+  const [myTopicsView, setMyTopicsView] = useState('custom'); // 'custom' | 'teamwork'
   const [searchQuery, setSearchQuery] = useState('');
 
   // Topic Pagination State
@@ -467,7 +468,6 @@ export default function App() {
         setMyTopics((prev) => [data, ...prev]);
         setNewTopicTitle('');
         setNewTopicDesc('');
-        awardUserXp(10);
       }
     } catch (err) {
       console.error('Error saving custom topic:', err.message);
@@ -630,9 +630,9 @@ export default function App() {
           clearShareTokenFromUrl();
           clearPendingShareToken();
           if (accepted) {
-            alert(`Invite accepted! Opening “${accepted.topic_title}”. Find it anytime under Teamwork.`);
-            setSelectedFilter('🤝 Teamwork');
-            setActiveTab('explorer');
+            alert(`Invite accepted! Opening “${accepted.topic_title}”. Find it anytime under My Topics → Teamwork.`);
+            setMyTopicsView('teamwork');
+            setActiveTab('my-topics');
             await openSharedWorkspace(accepted);
           }
         } catch (err) {
@@ -1263,9 +1263,6 @@ Return your response strictly in valid JSON format with no markdown formatting a
   const sharedTopicIds = new Set(incomingShares.map((s) => s.topic_id));
 
   const filteredTopics = topics.filter((t) => {
-    if (selectedFilter === '🤝 Teamwork') {
-      return sharedTopicIds.has(t.id);
-    }
     if (selectedFilter === '⏳ In Progress') {
       const debateInfo = userDebatesMap[t.id];
       return debateInfo && !debateInfo.is_completed;
@@ -1759,9 +1756,7 @@ Return your response strictly in valid JSON format with no markdown formatting a
                 </p>
               </div>
               <span className="text-xs font-bold bg-blue-100 text-blue-700 px-3 py-1 rounded-full">
-                {selectedFilter === '🤝 Teamwork'
-                  ? `${teamworkShares.length} Shared Topics`
-                  : `${filteredTopics.length} Topics Found`}
+                {filteredTopics.length} Topics Found
               </span>
             </div>
 
@@ -1770,7 +1765,6 @@ Return your response strictly in valid JSON format with no markdown formatting a
               <div className="flex flex-wrap gap-2">
                 {[
                   { label: 'All Topics', icon: '' },
-                  { label: '🤝 Teamwork', icon: '' },
                   { label: '⏳ In Progress', icon: '' },
                   { label: 'Value & Ethics', icon: '⚖️' },
                   { label: 'Policy & Rules', icon: '📜' },
@@ -1783,19 +1777,12 @@ Return your response strictly in valid JSON format with no markdown formatting a
                     onClick={() => handleFilterChange(cat.label)}
                     className={`px-4 py-2 rounded-full text-xs font-semibold transition flex items-center space-x-1.5 cursor-pointer ${
                       selectedFilter === cat.label
-                        ? cat.label === '🤝 Teamwork'
-                          ? 'bg-indigo-600 text-white shadow-md shadow-indigo-500/20'
-                          : 'bg-blue-600 text-white shadow-md shadow-blue-500/20'
+                        ? 'bg-blue-600 text-white shadow-md shadow-blue-500/20'
                         : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200/80 shadow-2xs'
                     }`}
                   >
                     {cat.icon && <span>{cat.icon}</span>}
-                    <span>
-                      {cat.label}
-                      {cat.label === '🤝 Teamwork' && incomingShares.length > 0
-                        ? ` (${incomingShares.length})`
-                        : ''}
-                    </span>
+                    <span>{cat.label}</span>
                   </button>
                 ))}
               </div>
@@ -1820,59 +1807,6 @@ Return your response strictly in valid JSON format with no markdown formatting a
                 <div className="w-10 h-10 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto"></div>
                 <p className="text-xs text-slate-500 font-medium">Loading topics from Supabase...</p>
               </div>
-            ) : selectedFilter === '🤝 Teamwork' ? (
-              teamworkShares.length === 0 ? (
-                <div className="py-16 text-center bg-white rounded-3xl border border-indigo-100 p-8 space-y-2">
-                  <p className="text-sm font-bold text-indigo-900">No shared team topics yet</p>
-                  <p className="text-xs text-slate-500 max-w-md mx-auto leading-relaxed">
-                    When a teammate sends you an invite link, sign up, open the link, then find it here under Teamwork.
-                  </p>
-                </div>
-              ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 w-full">
-                  {teamworkShares.map((share) => (
-                    <div
-                      key={share.id}
-                      className="bg-white border border-indigo-100 rounded-2xl p-6 flex flex-col justify-between shadow-2xs"
-                    >
-                      <div className="space-y-3">
-                        <div className="flex flex-wrap items-center gap-1.5">
-                          <span className="text-[10px] font-extrabold px-2.5 py-1 rounded-md uppercase tracking-wider bg-indigo-100 text-indigo-700">
-                            Teamwork
-                          </span>
-                          <span
-                            className={`text-[10px] font-extrabold px-2.5 py-1 rounded-md uppercase tracking-wider ${
-                              share.permission === 'edit'
-                                ? 'bg-emerald-100 text-emerald-700'
-                                : 'bg-amber-100 text-amber-800'
-                            }`}
-                          >
-                            {share.permission === 'edit' ? 'Can edit' : 'View only'}
-                          </span>
-                          <span className="text-[10px] font-extrabold px-2.5 py-1 rounded-md uppercase tracking-wider bg-slate-100 text-slate-600">
-                            {share.stance}
-                          </span>
-                        </div>
-                        <h3 className="text-lg font-bold leading-snug text-slate-800">{share.topic_title}</h3>
-                        <p className="text-xs text-slate-500 leading-relaxed">
-                          Shared workspace for team prep
-                          {share.permission === 'view'
-                            ? ' — leave comments on each point.'
-                            : ' — co-edit and save together.'}
-                        </p>
-                      </div>
-                      <div className="mt-6 pt-4 border-t border-slate-100">
-                        <button
-                          onClick={() => openSharedWorkspace(share)}
-                          className="w-full px-4 py-2.5 rounded-xl text-xs font-extrabold transition cursor-pointer bg-indigo-600 hover:bg-indigo-700 text-white"
-                        >
-                          Open shared topic
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )
             ) : filteredTopics.length === 0 ? (
               <div className="py-16 text-center bg-white rounded-3xl border border-slate-200/80 p-8">
                 <p className="text-sm font-bold text-slate-700">No topics found matching your query.</p>
@@ -2019,21 +1953,110 @@ Return your response strictly in valid JSON format with no markdown formatting a
         {/* PAGE 1.2: MY TOPICS TAB */}
         {activeTab === 'my-topics' && (
           <main className="p-8 w-full flex-1 space-y-6 pb-12">
-            <div className="flex justify-between items-end">
+            <div className="flex justify-between items-end gap-4 flex-wrap">
               <div>
-                <h2 className="text-3xl font-extrabold text-blue-950 tracking-tight">My Custom Topics</h2>
+                <h2 className="text-3xl font-extrabold text-blue-950 tracking-tight">My Topics</h2>
                 <p className="text-xs text-slate-500 mt-1 font-medium">
-                  Create, edit, or delete your own debate motions and practice them in the Arena!
+                  Your custom motions and shared team workspaces — all in one place.
                 </p>
               </div>
-              <span className="text-xs font-bold bg-purple-100 text-purple-700 px-3 py-1 rounded-full">
-                {myTopics.length} Custom Topics
+              <span
+                className={`text-xs font-bold px-3 py-1 rounded-full ${
+                  myTopicsView === 'teamwork'
+                    ? 'bg-indigo-100 text-indigo-700'
+                    : 'bg-purple-100 text-purple-700'
+                }`}
+              >
+                {myTopicsView === 'teamwork'
+                  ? `${teamworkShares.length} Shared Topics`
+                  : `${myTopics.length} Custom Topics`}
               </span>
             </div>
 
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => setMyTopicsView('custom')}
+                className={`px-4 py-2 rounded-full text-xs font-semibold transition cursor-pointer ${
+                  myTopicsView === 'custom'
+                    ? 'bg-blue-600 text-white shadow-md shadow-blue-500/20'
+                    : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200/80'
+                }`}
+              >
+                Custom Topics
+              </button>
+              <button
+                type="button"
+                onClick={() => setMyTopicsView('teamwork')}
+                className={`px-4 py-2 rounded-full text-xs font-semibold transition cursor-pointer ${
+                  myTopicsView === 'teamwork'
+                    ? 'bg-indigo-600 text-white shadow-md shadow-indigo-500/20'
+                    : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200/80'
+                }`}
+              >
+                🤝 Teamwork
+                {incomingShares.length > 0 ? ` (${incomingShares.length})` : ''}
+              </button>
+            </div>
+
+            {myTopicsView === 'teamwork' ? (
+              teamworkShares.length === 0 ? (
+                <div className="py-16 text-center bg-white rounded-3xl border border-indigo-100 p-8 space-y-2">
+                  <p className="text-sm font-bold text-indigo-900">No shared team topics yet</p>
+                  <p className="text-xs text-slate-500 max-w-md mx-auto leading-relaxed">
+                    When a teammate sends you an invite link, sign up, open the link, then find it here under My Topics → Teamwork.
+                  </p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 w-full">
+                  {teamworkShares.map((share) => (
+                    <div
+                      key={share.id}
+                      className="bg-white border border-indigo-100 rounded-2xl p-6 flex flex-col justify-between shadow-2xs"
+                    >
+                      <div className="space-y-3">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className="text-[10px] font-extrabold px-2.5 py-1 rounded-md uppercase tracking-wider bg-indigo-100 text-indigo-700">
+                            Teamwork
+                          </span>
+                          <span
+                            className={`text-[10px] font-extrabold px-2.5 py-1 rounded-md uppercase tracking-wider ${
+                              share.permission === 'edit'
+                                ? 'bg-emerald-100 text-emerald-700'
+                                : 'bg-amber-100 text-amber-800'
+                            }`}
+                          >
+                            {share.permission === 'edit' ? 'Can edit' : 'View only'}
+                          </span>
+                          <span className="text-[10px] font-extrabold px-2.5 py-1 rounded-md uppercase tracking-wider bg-slate-100 text-slate-600">
+                            {share.stance}
+                          </span>
+                        </div>
+                        <h3 className="text-lg font-bold leading-snug text-slate-800">{share.topic_title}</h3>
+                        <p className="text-xs text-slate-500 leading-relaxed">
+                          Shared workspace for team prep
+                          {share.permission === 'view'
+                            ? ' — leave comments on each point.'
+                            : ' — co-edit and save together.'}
+                        </p>
+                      </div>
+                      <div className="mt-6 pt-4 border-t border-slate-100">
+                        <button
+                          onClick={() => openSharedWorkspace(share)}
+                          className="w-full px-4 py-2.5 rounded-xl text-xs font-extrabold transition cursor-pointer bg-indigo-600 hover:bg-indigo-700 text-white"
+                        >
+                          Open shared topic
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )
+            ) : (
+              <>
             {/* Creation Form Box */}
             <div className="bg-white rounded-3xl p-6 border border-slate-200/80 shadow-xs space-y-4">
-              <h3 className="text-sm font-extrabold text-slate-800">✍️ Create a New Topic (+10 XP)</h3>
+              <h3 className="text-sm font-extrabold text-slate-800">✍️ Create a New Topic</h3>
               <form onSubmit={handleCreateCustomTopic} className="space-y-3">
                 <input
                   type="text"
@@ -2166,6 +2189,8 @@ Return your response strictly in valid JSON format with no markdown formatting a
                 ))}
               </div>
             )}
+              </>
+            )}
           </main>
         )}
 
@@ -2177,10 +2202,17 @@ Return your response strictly in valid JSON format with no markdown formatting a
               <div>
                 <div className="flex items-center space-x-2">
                   <button
-                    onClick={() => setActiveTab(activeTopic.category === 'Custom' ? 'my-topics' : 'explorer')}
+                    onClick={() => {
+                      if (collaboration) {
+                        setMyTopicsView('teamwork');
+                        setActiveTab('my-topics');
+                      } else {
+                        setActiveTab(activeTopic.category === 'Custom' ? 'my-topics' : 'explorer');
+                      }
+                    }}
                     className="text-xs bg-white/10 hover:bg-white/20 text-white font-bold px-2.5 py-1 rounded-lg transition cursor-pointer"
                   >
-                    ← Back to {activeTopic.category === 'Custom' ? 'My Topics' : 'Explorer'}
+                    ← Back to {collaboration || activeTopic.category === 'Custom' ? 'My Topics' : 'Explorer'}
                   </button>
                   <span className="text-[10px] uppercase tracking-widest font-bold text-blue-200">
                     {chosenStance === 'Affirmative' ? '👍 Team Affirmative' : '👎 Team Negative'}
@@ -2351,10 +2383,17 @@ Return your response strictly in valid JSON format with no markdown formatting a
               <div>
                 <div className="flex flex-wrap items-center gap-2">
                   <button
-                    onClick={() => setActiveTab(activeTopic.category === 'Custom' ? 'my-topics' : 'explorer')}
+                    onClick={() => {
+                      if (collaboration) {
+                        setMyTopicsView('teamwork');
+                        setActiveTab('my-topics');
+                      } else {
+                        setActiveTab(activeTopic.category === 'Custom' ? 'my-topics' : 'explorer');
+                      }
+                    }}
                     className="text-xs bg-white/10 hover:bg-white/20 text-white font-bold px-2.5 py-1 rounded-lg transition cursor-pointer"
                   >
-                    ← Back to {activeTopic.category === 'Custom' ? 'My Topics' : 'Explorer'}
+                    ← Back to {collaboration || activeTopic.category === 'Custom' ? 'My Topics' : 'Explorer'}
                   </button>
                   <span className="text-[10px] uppercase tracking-widest font-bold text-rose-100">
                     {chosenStance === 'Affirmative' ? '👍 Team Affirmative' : '👎 Team Negative'}
