@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { GoogleGenAI } from '@google/genai';
 import { supabase } from './supabaseClient';
 import AuthModal from './components/AuthModal';
+import LandingPage from './components/LandingPage';
 import ShareTopicModal from './components/ShareTopicModal';
 import PointComments from './components/PointComments';
 import {
@@ -1334,126 +1335,11 @@ Return your response strictly in valid JSON format with no markdown formatting a
   // ==========================================
   if (!session) {
     return (
-      <div className="min-h-screen bg-[#F0F3F8] font-sans text-slate-800 flex flex-col justify-between">
-        
-        {/* AUTH MODAL POPUP */}
-        {showAuthModal && (
-          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fadeIn">
-            <div className="relative w-full max-w-md">
-              <button
-                onClick={() => setShowAuthModal(false)}
-                className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 font-bold text-sm z-10 cursor-pointer"
-              >
-                ✕
-              </button>
-              <AuthModal onAuthSuccess={() => setShowAuthModal(false)} />
-            </div>
-          </div>
-        )}
-
-        {/* Landing Navbar */}
-        <header className="bg-white border-b border-slate-200/80 px-8 py-4 flex justify-between items-center shadow-2xs">
-          <div className="flex items-center space-x-3">
-            <div className="w-9 h-9 rounded-xl bg-blue-600 flex items-center justify-center text-white font-bold text-lg">
-              ⚔️
-            </div>
-            <h1 className="text-xl font-extrabold text-blue-900 tracking-tight">Debating Hero</h1>
-          </div>
-
-          <div className="flex items-center space-x-3">
-            <button
-              onClick={() => setShowAuthModal(true)}
-              className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-xs rounded-xl transition shadow-md shadow-blue-500/20 cursor-pointer"
-            >
-              Sign In / Get Started
-            </button>
-          </div>
-        </header>
-
-        {/* Hero Section */}
-        <main className="max-w-6xl mx-auto px-6 py-12 flex-1 flex flex-col justify-center space-y-12">
-          
-          <div className="text-center space-y-5 max-w-3xl mx-auto">
-            <span className="text-xs font-black uppercase tracking-widest px-3.5 py-1.5 rounded-full bg-blue-100 text-blue-700">
-              {getPendingShareToken()
-                ? '🔗 You’ve been invited to a shared debate topic'
-                : '⚔️ The Ultimate Debate Arena for Young Orators'}
-            </span>
-            <h2 className="text-4xl md:text-5xl font-black text-blue-950 leading-tight tracking-tight">
-              {getPendingShareToken()
-                ? 'Sign up to open your shared topic'
-                : 'Build Confidence, Master Rhetoric & Level Up Your Speech Skills!'}
-            </h2>
-            <p className="text-sm md:text-base text-slate-600 leading-relaxed font-medium">
-              {getPendingShareToken()
-                ? 'Create an account (or sign in), then we’ll open the shared workspace for teamwork.'
-                : 'Explore debate motions, craft arguments using structured frameworks, practice in the Arena with an AI Speech Coach, and build daily practice streaks!'}
-            </p>
-            <div className="pt-2">
-              <button
-                onClick={() => setShowAuthModal(true)}
-                className="px-8 py-4 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-extrabold text-sm rounded-2xl shadow-xl shadow-blue-500/25 hover:scale-105 transition duration-200 cursor-pointer"
-              >
-                {getPendingShareToken() ? 'Sign Up / Sign In to Join 🔗' : 'Join Debating Hero Today 🚀'}
-              </button>
-            </div>
-          </div>
-
-          {/* Feature Showcase Grid */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-6">
-            
-            <div className="bg-white rounded-3xl p-6 border border-slate-200/80 shadow-xs space-y-3">
-              <div className="w-12 h-12 rounded-2xl bg-blue-100 text-blue-600 flex items-center justify-center text-2xl font-bold">
-                🧭
-              </div>
-              <h3 className="text-lg font-bold text-slate-800">100+ Debate Topics</h3>
-              <p className="text-xs text-slate-500 leading-relaxed">
-                Browse through Value & Ethics, Policy, Fact & Tech, and Fun motions—or create your own custom topics!
-              </p>
-            </div>
-
-            <div className="bg-white rounded-3xl p-6 border border-slate-200/80 shadow-xs space-y-3">
-              <div className="w-12 h-12 rounded-2xl bg-purple-100 text-purple-600 flex items-center justify-center text-2xl font-bold">
-                ✨
-              </div>
-              <h3 className="text-lg font-bold text-slate-800">Gemini AI Coach</h3>
-              <p className="text-xs text-slate-500 leading-relaxed">
-                Get instant, age-appropriate AI coaching feedback and speech scoring before speaking aloud.
-              </p>
-            </div>
-
-            <div className="bg-white rounded-3xl p-6 border border-slate-200/80 shadow-xs space-y-3">
-              <div className="w-12 h-12 rounded-2xl bg-orange-100 text-orange-600 flex items-center justify-center text-2xl font-bold">
-                🔥
-              </div>
-              <h3 className="text-lg font-bold text-slate-800">Leveling & Daily Streaks</h3>
-              <p className="text-xs text-slate-500 leading-relaxed">
-                Earn XP for completing topics, unlock new debater ranks, and maintain your daily streak!
-              </p>
-            </div>
-
-          </div>
-
-          {/* CTA Banner */}
-          <div className="bg-gradient-to-r from-blue-900 to-indigo-950 rounded-3xl p-8 text-white shadow-xl flex flex-col md:flex-row items-center justify-between gap-6">
-            <div className="space-y-1 text-center md:text-left">
-              <h3 className="text-xl font-bold">Ready to make your voice heard?</h3>
-              <p className="text-xs text-blue-200">Sign in or create your Hero profile in seconds.</p>
-            </div>
-            <button
-              onClick={() => setShowAuthModal(true)}
-              className="px-6 py-3 bg-amber-400 hover:bg-amber-300 text-slate-900 font-black text-xs rounded-xl shadow-md transition cursor-pointer shrink-0"
-            >
-              Sign In / Register Now ⚔️
-            </button>
-          </div>
-
-        </main>
-
-        <footer className="text-center py-6 text-xs text-slate-400 border-t border-slate-200">
-          © {new Date().getFullYear()} Debating Hero. Built for young debaters everywhere.
-        </footer>
-      </div>
+      <LandingPage
+        showAuthModal={showAuthModal}
+        onOpenAuth={() => setShowAuthModal(true)}
+        onCloseAuth={() => setShowAuthModal(false)}
+      />
     );
   }
 
