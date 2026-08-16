@@ -142,7 +142,7 @@ export default function LandingPage({ showAuthModal, onOpenAuth, onCloseAuth }) 
                 </li>
                 <li className="flex gap-3">
                   <span className="landing-check" />
-                  Find shared topics under My Topics → Teamwork
+                  Find shared topics in the Teamwork module
                 </li>
                 <li className="flex gap-3">
                   <span className="landing-check" />
